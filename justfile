@@ -13,15 +13,24 @@ build-changed:
         | sort -u
     )
 
-    if [[ -z "$changed_pkgs" ]]; then
-        gum log --level info "no changed by-name packages detected"
+    # Overlay pins: extract package names from changed pin files
+    overlay_pkgs=$(
+        git diff --name-only master -- overlays/pins/ \
+        | sed -n 's|^overlays/pins/\(.*\)\.nix$|\1|p' \
+        | sort -u
+    )
+
+    all_pkgs=$(echo -e "${changed_pkgs}\n${overlay_pkgs}" | grep -v '^$' | sort -u)
+
+    if [[ -z "$all_pkgs" ]]; then
+        gum log --level info "no changed packages or overlays detected"
         exit 0
     fi
 
-    gum log --level info "changed packages:" $changed_pkgs
+    gum log --level info "changed packages:" $all_pkgs
 
     failed=()
-    for pkg in $changed_pkgs; do
+    for pkg in $all_pkgs; do
         gum log --level info "building $pkg"
         if NIXPKGS_ALLOW_UNFREE=1 nix build --impure --no-link --print-out-paths "path:.#$pkg"; then
             gum log --level info "$pkg ok"

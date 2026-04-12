@@ -228,7 +228,7 @@
             (final: prev: {
               lib = prev.lib.extend libVersionInfoOverlay;
             })
-          ];
+          ] ++ (import ./overlays lib);
         })
       );
 
