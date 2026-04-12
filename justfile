@@ -23,7 +23,7 @@ build-changed:
     failed=()
     for pkg in $changed_pkgs; do
         gum log --level info "building $pkg"
-        if nix build --no-link --print-out-paths ".#$pkg"; then
+        if NIXPKGS_ALLOW_UNFREE=1 nix build --impure --no-link --print-out-paths ".#$pkg"; then
             gum log --level info "$pkg ok"
         else
             gum log --level error "$pkg failed"
@@ -40,4 +40,4 @@ build-changed:
 
 # Build a specific package by attribute name
 build pkg:
-    nix build --no-link --print-out-paths ".#{{ pkg }}"
+    NIXPKGS_ALLOW_UNFREE=1 nix build --impure --no-link --print-out-paths ".#{{ pkg }}"
