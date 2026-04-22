@@ -626,6 +626,8 @@ with pkgs;
 
   fetchNextcloudApp = callPackage ../build-support/fetchnextcloudapp { };
 
+  fetchGgufModel = callPackage ../build-support/fetch-gguf-model { };
+
   # `fetchurl' downloads a file from the network.
   fetchurl =
     if stdenv.buildPlatform != stdenv.hostPlatform then
