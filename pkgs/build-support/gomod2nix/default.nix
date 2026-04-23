@@ -12,9 +12,9 @@
   The `go` argument defaults to the Go version specified in `go.mod` (via
   `selectGo`) and can be overridden: `buildGoApplication { go = pkgs.go_1_24; }`.
 
-  The `gomod2nix` CLI (used only in `passthru.updateScript`) is an internal
-  implementation detail — it is never invoked during `nix build`. Pass it
-  explicitly if you need `updateScript` to work.
+  The `gomod2nix` CLI is auto-injected from `pkgs.gomod2nix` via `callPackage`
+  and is propagated through `mkGoEnv` so any devShell that includes the env
+  gets the CLI on PATH (needed by `go-sync-wrap.sh` and `updateScript`).
 */
 {
   buildEnv,
@@ -23,7 +23,7 @@
   fetchgit,
   git,
   gnutar,
-  gomod2nix ? throw "gomod2nix: the gomod2nix CLI is only needed for updateScript — pass packages.gomod2nix from amarbel-llc/gomod2nix if required",
+  gomod2nix ? throw "gomod2nix: pkgs.gomod2nix must be available — ensure amarbel-llc/nixpkgs is your nixpkgs input",
   jq,
   lib,
   makeSetupHook,
@@ -466,7 +466,7 @@ let
           goConfigHook
         ];
 
-        propagatedBuildInputs = [ go ];
+        propagatedBuildInputs = [ go gomod2nix ];
 
         # Pass vendor directory to the setup hook
         goVendorDir = vendorEnv;
