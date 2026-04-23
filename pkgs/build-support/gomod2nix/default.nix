@@ -52,7 +52,6 @@ let
     goBuildHook
     goCheckHook
     goInstallHook
-    goSyncWrapHook
     ;
 
   inherit (builtins)
@@ -444,6 +443,21 @@ let
           ;
       };
 
+      goSyncWrapper = writeScript "go" ''
+        #!${runtimeShell}
+        ${go}/bin/go "$@"
+        _exit=$?
+        if [ $_exit -eq 0 ]; then
+          case "''${1:-} ''${2:-}" in
+            "get "* | "mod tidy" | "mod init" | "mod edit" | "work sync")
+              echo "[gomod2nix] regenerating gomod2nix.toml..." >&2
+              ${gomod2nix}/bin/gomod2nix generate
+              ;;
+          esac
+        fi
+        exit $_exit
+      '';
+
     in
     stdenv.mkDerivation (
       removeAttrs attrs [
@@ -467,7 +481,7 @@ let
           goConfigHook
         ];
 
-        propagatedBuildInputs = [ go gomod2nix goSyncWrapHook ];
+        propagatedBuildInputs = [ go gomod2nix ];
 
         # Pass vendor directory to the setup hook
         goVendorDir = vendorEnv;
@@ -475,9 +489,11 @@ let
         preferLocalBuild = true;
 
         buildPhase = ''
-          mkdir $out
+          mkdir -p $out/bin
 
           export GOPATH="$out"
+
+          install -m755 ${goSyncWrapper} $out/bin/go
 
         ''
         + optionalString (pathExists toolsGo) ''
