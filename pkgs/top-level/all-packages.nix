@@ -639,6 +639,13 @@ with pkgs;
     writeBunScriptBin
     ;
 
+  inherit (callPackage ../build-support/gomod2nix { })
+    buildGoApplication
+    mkGoEnv
+    mkVendorEnv
+    mkGoCacheEnv
+    ;
+
   # `fetchurl' downloads a file from the network.
   fetchurl =
     if stdenv.buildPlatform != stdenv.hostPlatform then
