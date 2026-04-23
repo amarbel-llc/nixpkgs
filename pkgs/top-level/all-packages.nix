@@ -626,27 +626,12 @@ with pkgs;
 
   fetchNextcloudApp = callPackage ../build-support/fetchnextcloudapp { };
 
-  fetchGgufModel = callPackage ../build-support/fetch-gguf-model { };
-
-  inherit (callPackage ../build-support/bun2nix { })
-    buildBunBinary
-    buildBunBinaries
-    buildZxScript
-    buildZxScriptFromFile
-    fetchBunDeps
-    mkBunDerivation
-    writeBunApplication
-    writeBunScriptBin
-    ;
-
   inherit (callPackage ../build-support/gomod2nix { })
     buildGoApplication
     mkGoEnv
     mkVendorEnv
     mkGoCacheEnv
     ;
-
-  gomod2nix = callPackage ../build-support/gomod2nix/cli { inherit buildGoApplication go; };
 
   # `fetchurl' downloads a file from the network.
   fetchurl =

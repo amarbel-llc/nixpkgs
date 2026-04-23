@@ -20,16 +20,34 @@ check-changed:
         | sort -u
     )
 
+    failed=()
+
+    # amarbel-packages overlay: always check these (not discoverable by filename).
+    # Checked separately since some are functions, not derivations.
+    amarbel_pkgs=(fetchGgufModel buildBunBinary buildBunBinaries buildZxScript buildZxScriptFromFile fetchBunDeps mkBunDerivation writeBunApplication writeBunScriptBin gomod2nix)
+    for pkg in "${amarbel_pkgs[@]}"; do
+        gum log --level info "evaluating $pkg"
+        if nix eval "path:.#$pkg" > /dev/null 2>&1; then
+            gum log --level info "$pkg ok"
+        else
+            gum log --level error "$pkg failed to evaluate"
+            failed+=("$pkg")
+        fi
+    done
+
     all_pkgs=$(echo -e "${changed_pkgs}\n${overlay_pkgs}" | { grep -v '^$' || true; } | sort -u)
 
     if [[ -z "$all_pkgs" ]]; then
+        if [[ ${#failed[@]} -gt 0 ]]; then
+            gum log --level error "failed packages:" "${failed[@]}"
+            exit 1
+        fi
         gum log --level info "no changed packages or overlays detected"
         exit 0
     fi
 
     gum log --level info "checking packages:" $all_pkgs
 
-    failed=()
     for pkg in $all_pkgs; do
         gum log --level info "evaluating $pkg"
         if nix eval --json "path:.#$pkg.version" > /dev/null 2>&1 \
