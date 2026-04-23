@@ -20,7 +20,7 @@ check-changed:
         | sort -u
     )
 
-    all_pkgs=$(echo -e "${changed_pkgs}\n${overlay_pkgs}" | grep -v '^$' | sort -u)
+    all_pkgs=$(echo -e "${changed_pkgs}\n${overlay_pkgs}" | { grep -v '^$' || true; } | sort -u)
 
     if [[ -z "$all_pkgs" ]]; then
         gum log --level info "no changed packages or overlays detected"
@@ -65,7 +65,7 @@ build-changed:
         | sort -u
     )
 
-    all_pkgs=$(echo -e "${changed_pkgs}\n${overlay_pkgs}" | grep -v '^$' | sort -u)
+    all_pkgs=$(echo -e "${changed_pkgs}\n${overlay_pkgs}" | { grep -v '^$' || true; } | sort -u)
 
     if [[ -z "$all_pkgs" ]]; then
         gum log --level info "no changed packages or overlays detected"
