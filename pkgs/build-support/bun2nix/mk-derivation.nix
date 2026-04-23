@@ -1,10 +1,71 @@
-# Bun mkDerivation function.
-#
-# Similar to stdenv.mkDerivation but comes with additional specifics for
-# creating bun packages. A lot of the implementation details exist inside
-# the setup hook consumed by this function. This function's main role is
-# to provide a more idiomatic interface for simple builds while the hook
-# serves anything more custom.
+/**
+  `stdenv.mkDerivation` extended with Bun-specific build conventions.
+
+  Wraps `stdenv.mkDerivation` via `lib.extendMkDerivation`. The setup hook
+  (`bun2nix-hook`) is automatically added to `nativeBuildInputs`. Build flags
+  default to a compile+minify+sourcemap invocation derived from the
+  `module` field in `packageJson` when no explicit `bunBuildFlags` is given.
+
+  For custom build phases, use `hook` directly with a plain
+  `stdenv.mkDerivation`. `mkBunDerivation` is the higher-level convenience
+  wrapper for standard compile builds.
+
+  # Inputs
+
+  `bunDeps`
+  : Output of `fetchBunDeps`. Required unless `packageJson` is set (in which
+    case the derivation only runs `bun install` without a lockfile check).
+
+  `packageJson` (optional)
+  : Path to `package.json`. When provided, `pname` and `version` default to
+    the `name` and `version` fields in the file.
+
+  `pname` (optional if `packageJson` is set)
+  : Package name. Takes priority over `packageJson.name`.
+
+  `version` (optional if `packageJson` is set)
+  : Package version. Takes priority over `packageJson.version`.
+
+  `bunBuildFlags` (optional)
+  : Explicit flags for `bun build`. When omitted and `packageJson.module`
+    is present, defaults to `[module --outfile pname --compile --minify
+    --sourcemap]` (plus `--bytecode` if `bunCompileToBytecode` is true).
+
+  `bunCompileToBytecode` (optional, default `true`)
+  : Append `--bytecode` to the default build flags.
+
+  `extraBunBuildFlags` (optional)
+  : Flags appended to the default build flags before `removeBunBuildFlags`.
+
+  `removeBunBuildFlags` (optional)
+  : Flags to remove from the default build flags list.
+
+  `dontFixup` (optional)
+  : Defaults to `true` when `buildPhase` is not set, because Bun binaries
+    are broken by the default fixup phase.
+
+  # Type
+
+  ```
+  mkBunDerivation :: AttrSet -> Derivation
+  ```
+
+  # Examples
+  :::{.example}
+  ## `mkBunDerivation` usage example
+
+  ```nix
+  mkBunDerivation {
+    pname = "my-app";
+    version = "1.0.0";
+    src = ./.;
+    packageJson = ./package.json;
+    bunDeps = fetchBunDeps { bunNix = ./bun.nix; };
+  }
+  ```
+
+  :::
+*/
 { pkgs, lib, hook }:
 
 lib.extendMkDerivation {

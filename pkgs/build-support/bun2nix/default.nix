@@ -1,13 +1,24 @@
-# bun2nix library — vendored from nix-community/bun2nix, converted from
-# flake-parts modules to plain callPackage functions.
-#
-# Usage:
-#   let bun2nix = import ./nix/bun2nix { inherit pkgs bun cacheEntryCreator; };
-#   in { inherit (bun2nix) buildBunBinary fetchBunDeps mkDerivation; }
-#
-# The cacheEntryCreator argument is a Zig binary from the upstream bun2nix
-# flake (packages.${system}.cacheEntryCreator). It must be provided by the
-# caller because we don't vendor the Zig/Rust source programs.
+/**
+  bun2nix build-support library.
+
+  Exposes helpers for packaging Bun (JavaScript/TypeScript runtime) projects
+  as Nix derivations. The public surface is:
+
+  - `buildBunBinary` / `buildBunBinaries` — compile + wrap a TypeScript project
+  - `buildZxScript` / `buildZxScriptFromFile` — package a zx shell script
+  - `fetchBunDeps` — pre-fetch npm dependencies from a `bun.nix` lockfile
+  - `mkBunDerivation` — `stdenv.mkDerivation` with Bun conventions
+  - `writeBunApplication` — install a Bun server/app with a launcher wrapper
+  - `writeBunScriptBin` — write a plain Bun shebang script
+
+  All helpers that fetch npm packages require `cacheEntryCreator`, a Zig
+  binary from the `nix-community/bun2nix` flake
+  (`packages.\${system}.cacheEntryCreator`). It is not vendored here; callers
+  must provide it. The default argument throws an informative error.
+
+  The `bun` argument defaults to `pkgs.bun` and can be overridden to use a
+  trimmed runtime once one is available.
+*/
 
 {
   pkgs,
