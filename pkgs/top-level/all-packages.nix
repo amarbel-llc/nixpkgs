@@ -628,6 +628,17 @@ with pkgs;
 
   fetchGgufModel = callPackage ../build-support/fetch-gguf-model { };
 
+  inherit (callPackage ../build-support/bun2nix { })
+    buildBunBinary
+    buildBunBinaries
+    buildZxScript
+    buildZxScriptFromFile
+    fetchBunDeps
+    mkBunDerivation
+    writeBunApplication
+    writeBunScriptBin
+    ;
+
   # `fetchurl' downloads a file from the network.
   fetchurl =
     if stdenv.buildPlatform != stdenv.hostPlatform then
