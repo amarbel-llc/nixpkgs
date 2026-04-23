@@ -52,6 +52,7 @@ let
     goBuildHook
     goCheckHook
     goInstallHook
+    goSyncWrapHook
     ;
 
   inherit (builtins)
@@ -466,7 +467,7 @@ let
           goConfigHook
         ];
 
-        propagatedBuildInputs = [ go gomod2nix ];
+        propagatedBuildInputs = [ go gomod2nix goSyncWrapHook ];
 
         # Pass vendor directory to the setup hook
         goVendorDir = vendorEnv;
@@ -477,9 +478,6 @@ let
           mkdir $out
 
           export GOPATH="$out"
-
-          mkdir -p $out/etc/profile.d
-          cp ${./hooks/go-sync-wrap.sh} $out/etc/profile.d/gomod2nix-wrap.sh
 
         ''
         + optionalString (pathExists toolsGo) ''

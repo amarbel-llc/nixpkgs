@@ -34,4 +34,8 @@
   goInstallHook = makeSetupHook {
     name = "goInstallHook";
   } ./go-install-hook.sh;
+
+  goSyncWrapHook = makeSetupHook {
+    name = "goSyncWrapHook";
+  } ./go-sync-wrap.sh;
 }
