@@ -179,20 +179,49 @@ or from *gomod2nix.toml* if *goPackagePath* is set there. *commit* comes from
 *src.rev* or *src.shortRev* if the source is a flake input; otherwise it is
 the string *"unknown"*.
 
-To surface these in a *version* subcommand, declare the variables at package
-scope so the linker can set them:
+## Getting a real commit hash
+
+*src = ./.;* is a plain path — it has no *.rev* and commit will always be
+*"unknown"*. To bake in the real commit, pass *self* as *src*:
+
+```
+outputs = { self, nixpkgs, ... }:
+  let
+    myapp = pkgs.buildGoApplication {
+      src = self;   # self.rev / self.shortRev come from the flake lock
+      ...
+    };
+  in { ... }
+```
+
+*self.rev* is only set when the working tree is clean and the flake was
+evaluated from a committed ref (e.g. via *nix build* after *git commit*).
+*self.shortRev* is the 7-character abbreviation. *buildGoApplication* prefers
+*.rev* and falls back to *.shortRev* automatically.
+
+During local development with a dirty tree, *self.rev* is absent — the commit
+field falls back to *"unknown"*, which is the intended behaviour.
+
+## Go-side wiring
+
+Declare the variables at package scope in *package main* so the linker can
+set them via the *-X* flag:
 
 ```go
 var version = "dev"
 var commit  = "unknown"
 ```
 
-Then handle the subcommand:
+Then surface them in a *version* subcommand:
 
 ```go
 case "version":
     fmt.Printf("myapp %s (%s)\n", version, commit)
 ```
+
+The variable names must match the ldflag paths exactly: *main.version* and
+*main.commit*. If they live in a different package, adjust accordingly (e.g.
+*-X mypkg.version*) and update the *ldflags* attribute on *buildGoApplication*.
 
 In development (*nix develop*), the binary is built without the ldflag
 injection, so *version* and *commit* will read *"dev"* and *"unknown"*
