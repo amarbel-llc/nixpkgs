@@ -233,6 +233,20 @@
       );
 
       /**
+        Overlay surface for downstream flakes that do
+        `import nixpkgs { overlays = [ ... ]; }` rather than consume
+        `legacyPackages` directly.
+
+        - `default` — everything the fork contributes (upstream pins +
+          `amarbel-packages` additions), composed into one overlay.
+        - `amarbelPackages` — fork-specific additions only (no pins).
+      */
+      overlays = {
+        default = lib.composeManyExtensions (import ./overlays lib);
+        amarbelPackages = import ./overlays/amarbel-packages.nix;
+      };
+
+      /**
         Optional modules that can be imported into a NixOS configuration.
 
         Example:
