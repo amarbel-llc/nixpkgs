@@ -1,0 +1,12 @@
+{
+  "name": "rolldown-poc",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "rolldown -c rolldown.config.mjs"
+  },
+  "devDependencies": {
+    "rolldown": "1.0.0-rc.9"
+  }
+}
