@@ -9,16 +9,17 @@ mkBunDerivation {
 
   # Override: run the package.json `build` script (which invokes rolldown)
   # instead of `bun build` (Bun's own bundler) that the hook defaults to.
+  # BROWSER_TYPE is read by rolldown.config.mjs to name the output dir.
   buildPhase = ''
     runHook preBuild
-    bun run build
+    BROWSER_TYPE=chrome bun run build
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
     mkdir -p "$out"
-    cp -r dist "$out/"
+    cp -r dist-chrome "$out/"
     runHook postInstall
   '';
 }

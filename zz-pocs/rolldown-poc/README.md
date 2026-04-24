@@ -2,24 +2,35 @@
 
 Proof-of-concept demonstrating that the fork's `bun2nix` build-support library
 can package an npm-style project whose dependency graph includes native Rust
-binaries distributed as optional platform-specific packages.
+binaries distributed as optional platform-specific packages, using a realistic
+rolldown configuration adapted from `~/eng/repos/chrest/extension`.
 
 ## What it proves
 
-- `rolldown` (`1.0.0-rc.9`) installs and runs inside a Nix sandbox via Bun.
+- A multi-entry `rolldown` config (two entry points: `main.js` → cjs,
+  `options.js` → iife) with a custom inline plugin (`constsPlugin` resolving
+  virtual `consts:` imports) runs inside a Nix sandbox via Bun.
+- Runtime deps with their own transitive graphs (`async-mutex`,
+  `error-stack-parser-es`) are bundled into the output.
+- Environment variables (`BROWSER_TYPE`) reach the `rolldown.config.mjs` at
+  build time.
 - The full set of `@rolldown/binding-*` native bindings is captured
-  deterministically in the FOD (fixed-output derivation) via `fetchBunDeps`.
-- At build time, Bun populates `node_modules/` with the host-matching binding
-  and `bun run build` invokes rolldown to produce `dist/bundle.js`.
+  deterministically in the FOD via `fetchBunDeps`.
+- At Nix build time, Bun populates `node_modules/` with the host-matching
+  binding and `bun run build` invokes rolldown to produce
+  `dist-chrome/{main,options}.js`.
 - No custom `rolldown2nix` / `buildNpmPackage` wrapper is required.
 
 See GitHub issue #8 for the motivating context.
 
 ## Layout
 
-- `src/index.ts` — trivial one-line TS source
-- `rolldown.config.mjs` — minimal rolldown config
-- `package.json` — depends only on `rolldown`
+- `src/*.js` — five-file JS module graph copied from `chrest/extension/src/`
+  (main, lib, items, options, routes)
+- `rolldown.config.mjs` — multi-entry config with `constsPlugin`, copied
+  verbatim from `chrest/extension`
+- `package.json` — bun-oriented; `rolldown` as devDependency, `async-mutex`
+  and `error-stack-parser-es` as runtime deps (matches chrest's deps)
 - `bun.lock` / `bun.nix` — generated lockfile and its Nix-consumable form
 - `flake.nix` / `default.nix` — Nix entry points
 - `justfile` — `explore`-group recipes for rerunning each step
@@ -28,14 +39,15 @@ See GitHub issue #8 for the motivating context.
 
 ```sh
 just nix-build
-# → result/dist/bundle.js
+# → result/dist-chrome/{main.js,options.js}
 ```
 
-To re-run the host-side sanity check (regenerate `bun.lock` and bundle locally):
+To re-run the host-side sanity check (regenerate `bun.lock` and bundle
+locally):
 
 ```sh
-just bootstrap  # bun install
-just host-build # bun run build
+just bootstrap   # bun install
+just host-build  # BROWSER_TYPE=chrome bun run build
 ```
 
 To regenerate `bun.nix` after dependency changes:
@@ -53,10 +65,24 @@ just regen-bun-nix
      flake at eval time (resolves to `/nix/`, which is forbidden in pure mode).
    - Consequence: running the PoC on another machine or a different worktree
      requires editing that URL.
-   - Future cleanup: once the parent flake exposes a `legacyPackages.*`
-     attribute for the PoC, the standalone flake can go away.
 
-2. **External `bun2nix` CLI flake input.** `flake.nix` still declares
+2. **External `bun2nix` CLI flake input.** `flake.nix` declares
    `nix-community/bun2nix` as an input to get the `bun2nix` CLI binary into
    the devShell (needed to regenerate `bun.nix`). The Nix-side builder uses
-   `pkgs.fetchBunDeps` directly, which is now wired through the overlay.
+   `pkgs.fetchBunDeps` directly, which is wired through the overlay.
+
+3. **Rolldown version drift.** `package.json` declares `^1.0.0-beta.8`
+   (matching chrest). At bun install time, this resolved to `1.0.0-rc.17` —
+   chrest's `package-lock.json` happens to pin `1.0.0-rc.9`. Both are valid
+   resolutions of the same range; the PoC exercises bun2nix against the
+   latest matching rolldown, not the pinned one.
+
+4. **BROWSER_TYPE=chrome only.** `default.nix` hardcodes `BROWSER_TYPE=chrome`
+   for the Nix build. chrest's real build runs the same config twice (once
+   per browser). Adding firefox as a second Nix output would be a small
+   extension.
+
+5. **Rolldown output only.** The PoC skips the non-rolldown parts of chrest's
+   build (manifest assembly via `jq`, copying `assets/*` into `dist-*/`,
+   zipping `dist-*.zip`). Including those wouldn't add anything to the
+   "bun2nix handles rolldown" claim.
