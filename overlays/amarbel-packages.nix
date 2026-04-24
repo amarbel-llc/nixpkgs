@@ -3,8 +3,15 @@
 final: _prev: {
   fetchGgufModel = final.callPackage ../pkgs/build-support/fetch-gguf-model { };
 
+  # Zig binary from nix-community/bun2nix, needed by fetchBunDeps.
+  bun2nix-cache-entry-creator =
+    final.callPackage ../pkgs/build-support/bun2nix/cache-entry-creator
+      { };
+
   inherit
-    (final.callPackage ../pkgs/build-support/bun2nix { })
+    (final.callPackage ../pkgs/build-support/bun2nix {
+      cacheEntryCreator = final.bun2nix-cache-entry-creator;
+    })
     buildBunBinary
     buildBunBinaries
     buildZxScript
