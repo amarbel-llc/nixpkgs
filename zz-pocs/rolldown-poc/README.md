@@ -86,3 +86,41 @@ just regen-bun-nix
    build (manifest assembly via `jq`, copying `assets/*` into `dist-*/`,
    zipping `dist-*.zip`). Including those wouldn't add anything to the
    "bun2nix handles rolldown" claim.
+
+6. **Expected: `error (ignored): NAR hash mismatch` on every invocation.**
+   You will see a warning like this on each `nix develop` / `nix build`:
+
+   ```
+   error (ignored): NAR hash mismatch in input
+     'path:/home/.../plain-linden?narHash=sha256-AAA='
+     expected 'sha256-BBB=' but got 'sha256-AAA='
+   ```
+
+   It is **not a build failure**. Nix prints it, marks it `(ignored)`, and
+   proceeds with the freshly computed hash. Output is correct.
+
+   **Why it happens.** The PoC is a flake whose `nixpkgs` input is
+   `path:/abs/to/plain-linden` — a live, mutating git worktree. Every run of
+   `bun install` / `bun2nix -o bun.nix` / editing a tracked file changes that
+   path's NAR hash. Nix's per-user fetcher cache
+   (`~/.cache/nix/fetcher-cache-v4.sqlite`) holds a mapping from the URL to a
+   previous hash; on the next invocation, the freshly computed hash differs
+   from the cached one, and Nix warns before using the fresh value.
+
+   **Why it's safe here.** Verified three ways: (a) build outputs change as
+   source changes (e.g., widening from minimal → chrest config produced a
+   32.6 kB `main.js` vs. the prior 110 B `bundle.js` — stale cache would have
+   re-served the old output); (b) the PoC uses `pkgs.mkBunDerivation`, which
+   requires commit `ef5d7e3086cf`'s overlay fix — a stale pre-fix cache would
+   have thrown at `pkgs.fetchBunDeps`; (c) content-addressed store paths
+   differ across runs, which only happens when Nix actually ran the build
+   with the new content.
+
+   **Why we haven't "fixed" it.** The warning is a symptom of an intentional
+   design choice: a mutable `path:` flake input pointed at the local
+   worktree. The alternative — restructuring the PoC as a non-flake
+   `default.nix` that does `import ../.. { }` directly — would eliminate the
+   warning by bypassing flake narHash tracking entirely. We chose to keep
+   the current flake-based invocation for convenience; the warning is a
+   flake-harness artifact, not a statement about the bun2nix-for-rolldown
+   integration we're exercising.
