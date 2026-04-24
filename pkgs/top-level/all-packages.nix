@@ -633,6 +633,8 @@ with pkgs;
     mkGoCacheEnv
     ;
 
+  gomod2nix = callPackage ../build-support/gomod2nix/cli { };
+
   # `fetchurl' downloads a file from the network.
   fetchurl =
     if stdenv.buildPlatform != stdenv.hostPlatform then
