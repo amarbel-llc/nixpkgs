@@ -56,10 +56,7 @@ just regen-bun-nix
    - Future cleanup: once the parent flake exposes a `legacyPackages.*`
      attribute for the PoC, the standalone flake can go away.
 
-2. **`cacheEntryCreator` passed directly, not via the overlay.** The fork's
-   overlay at `overlays/amarbel-packages.nix` currently calls
-   `callPackage pkgs/build-support/bun2nix {}` with an empty attrs. That makes
-   `pkgs.fetchBunDeps` throw unless the caller re-invokes `callPackage` with
-   `cacheEntryCreator` explicitly — which is what `flake.nix` here does.
-   - Future cleanup: wire `cacheEntryCreator` through the overlay so the PoC
-     can simply consume `pkgs.mkBunDerivation` / `pkgs.fetchBunDeps`.
+2. **External `bun2nix` CLI flake input.** `flake.nix` still declares
+   `nix-community/bun2nix` as an input to get the `bun2nix` CLI binary into
+   the devShell (needed to regenerate `bun.nix`). The Nix-side builder uses
+   `pkgs.fetchBunDeps` directly, which is now wired through the overlay.

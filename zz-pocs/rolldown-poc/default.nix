@@ -1,9 +1,9 @@
-{ bun2nix }:
+{ mkBunDerivation, fetchBunDeps }:
 
-bun2nix.mkBunDerivation {
+mkBunDerivation {
   src = ./.;
   packageJson = ./package.json;
-  bunDeps = bun2nix.fetchBunDeps {
+  bunDeps = fetchBunDeps {
     bunNix = ./bun.nix;
   };
 

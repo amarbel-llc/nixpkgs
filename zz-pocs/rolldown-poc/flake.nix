@@ -21,23 +21,14 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
-      bun2nixCli = bun2nix-flake.packages.${system}.default;
-      # Re-call the fork's bun2nix library with `cacheEntryCreator` wired up.
-      # The overlay at overlays/amarbel-packages.nix passes `{}` so fetchBunDeps
-      # would throw; bypass by calling directly.
-      bun2nix = pkgs.callPackage (pkgs.path + /pkgs/build-support/bun2nix) {
-        cacheEntryCreator = bun2nix-flake.packages.${system}.cacheEntryCreator;
-      };
     in
     {
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.bun
-          bun2nixCli
+          bun2nix-flake.packages.${system}.default
         ];
       };
-      packages.${system}.default = pkgs.callPackage ./default.nix {
-        inherit bun2nix;
-      };
+      packages.${system}.default = pkgs.callPackage ./default.nix { };
     };
 }
