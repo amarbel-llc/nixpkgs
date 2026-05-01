@@ -22,6 +22,16 @@ final: _prev: {
     writeBunScriptBin
     ;
 
+  inherit
+    (final.callPackage ../pkgs/build-support/gomod2nix { })
+    buildGoApplication
+    buildGoRace
+    buildGoCover
+    mkGoEnv
+    mkVendorEnv
+    mkGoCacheEnv
+    ;
+
   gomod2nix = final.callPackage ../pkgs/build-support/gomod2nix/cli {
     inherit (final) buildGoApplication go;
   };
