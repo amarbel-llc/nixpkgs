@@ -113,3 +113,33 @@ build-changed:
 # Build a specific package by attribute name
 build pkg:
     NIXPKGS_ALLOW_UNFREE=1 nix build --impure --no-link --print-out-paths "path:.#{{ pkg }}"
+
+# [explore] Test the overlay-flake migration against amarbel-llc/maneater
+# Clones into .tmp/maneater (or reuses), bumps the nixpkgs input, runs
+# nix flake check + nix build .#default.
+[group: 'explore']
+test-overlay-against-maneater:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .tmp
+    target=.tmp/maneater
+    if [[ -d "$target/.git" ]]; then
+      gum log --level info "reusing existing $target"
+      git -C "$target" fetch --quiet origin
+      git -C "$target" reset --hard origin/HEAD
+    else
+      gum log --level info "cloning maneater into $target"
+      git clone --quiet git@github.com:amarbel-llc/maneater.git "$target"
+    fi
+
+    # Override maneater's nixpkgs input to the LOCAL worktree
+    # so the test exercises the in-progress overlay flake, not whatever
+    # has been pushed to origin.
+    local_overlay="$(pwd)"
+    cd "$target"
+    gum log --level info "overriding nixpkgs input to path:$local_overlay"
+
+    gum log --level info "running nix flake check (eval-only)"
+    NIXPKGS_ALLOW_UNFREE=1 nix flake check \
+      --keep-going --no-build --impure \
+      --override-input nixpkgs "path:$local_overlay"
