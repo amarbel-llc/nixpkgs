@@ -6,7 +6,10 @@ promotion-criteria: |
   (dagnabit, madder, maneater, dodder, chrest, nebulous) commits to using
   per-package caching as a build target, AND the plugin-loading story is
   worked out for the fork's devshells (or experimental-mode is judged
-  acceptable as the only supported path).
+  acceptable as the only supported path), AND the cross-flake Go-module
+  composition question (see Limitations) has at least a working answer
+  for the dagnabit-codegen-as-Nix-derivation use case — since that's
+  the load-bearing motivation beyond raw cache reuse.
 
   proposed → experimental: working overlay attrs land behind a flake input,
   with at least one downstream repo building successfully against
@@ -38,6 +41,23 @@ derivations are produced per-package. Architecturally similar to Bazel's
 `rules_go`, with a much narrower scope. For monorepos with several binaries
 sharing a heavy dependency graph, the unit of cache reuse moves from
 "the whole app" to "individual Go packages."
+
+A second motivation, beyond cache reuse, is to push **codegen into the
+Nix layer**. Several of the fork's Go projects depend on codegen tools
+that today are invoked either as a `preBuild` shell fragment in the
+consumer's Nix derivation (e.g. `madder/go/default.nix` runs
+`dagnabit export` in `preBuild`) or — more painfully — as a manual step
+developers re-run during dev loops outside Nix (`go run` against
+already-generated sources). With per-package Nix derivations, the
+codegen step would become its own first-class derivation node:
+`dagnabit`-built binaries would do their graph export at Nix build
+time once per input change, the result would be cached by Nix, and
+**both** `nix build` and bare-`go run` dev loops would consume the same
+cached artifact instead of re-generating per dev iteration. The
+ambition generalizes — `amarbel-llc/tommy` and other codegen
+pipelines should follow the same shape, with Nix becoming the
+canonical codegen layer rather than an opaque pre-build hook each
+consumer rewires by hand.
 
 This FDR exists so downstream repos in the fork can point to a single
 write-up when deciding whether to migrate or wait. **Status is
@@ -185,6 +205,26 @@ plugin-files = /nix/store/...-go2nix-nix-plugin/lib/nix/plugins/libgo2nix_plugin
   `go install`, and `-race` / `-cover` interact differently at that
   level. Concrete experimentation needed before a recommendation.
 
+- **Open question: cross-flake Go-module composition without going
+  through `go`.** The codegen-at-Nix-build-time vision (see Problem
+  Statement) needs an answer to a question that's bigger than this
+  builder choice: **how does a Go module exposed by one Nix flake get
+  imported into another Go module's Nix flake natively in Nix terms,
+  rather than round-tripping through Go's module system?** Today,
+  cross-repo Go composition is owned end-to-end by `go.mod` /
+  `go.sum` / `replace` directives; Nix only packages the result that
+  Go has already resolved. If `dagnabit`'s Nix-built graph export (or
+  `tommy`'s code generation, etc.) is to be consumed by another
+  flake's Go module without that consumer re-running the generator,
+  the consumer flake needs to pull the generated Go sources (or
+  per-package derivations) from the producer flake at the Nix layer.
+  numtide go2nix's default mode resolves package paths via the Nix
+  plugin's `builtins.resolveGoPackages`; whether that resolution can
+  reach across flake inputs (or whether each flake has to vendor the
+  full transitive package graph) is not clear from the upstream docs.
+  This is the most consequential unanswered question for the codegen
+  ambition and is logically prior to migrating any fork repo.
+
 - **Per-package caching's win is monorepo-shaped.** The benefit only
   shows up when (a) the project has many packages, (b) builds are run
   often enough that cache reuse matters, and (c) changes are typically
@@ -207,3 +247,9 @@ plugin-files = /nix/store/...-go2nix-nix-plugin/lib/nix/plugins/libgo2nix_plugin
 - Downstream consumers expected to evaluate against this FDR:
   `dagnabit`, `madder`, `maneater`, `dodder`, `chrest`, `nebulous`. Each
   should track its own decision in a downstream FDR pointing here.
+- Codegen tools relevant to the Nix-as-codegen-layer ambition:
+  `amarbel-llc/dagnabit` (graph export, currently invoked as a
+  `preBuild` shell fragment in `madder/go/default.nix`),
+  `amarbel-llc/tommy` (a generalization target — same shape applies).
+  A future FDR may capture the codegen-as-Nix-derivation pattern
+  independently of the choice of Go builder.
