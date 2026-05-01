@@ -5,6 +5,8 @@
   gomod2nix.toml lockfiles as Nix derivations. The public surface is:
 
   - `buildGoApplication` — build a Go application from a gomod2nix.toml lockfile
+  - `buildGoRace` — race-instrumented variant of an existing buildGoApplication derivation
+  - `buildGoCover` — coverage-instrumented variant that runs an integration command under $GOCOVERDIR
   - `mkGoEnv` — create a vendor environment for use in devshells
   - `mkVendorEnv` — low-level: assemble a vendor/ directory from fetched modules
   - `mkGoCacheEnv` — pre-warm the Go build cache as a derivation
@@ -739,10 +741,111 @@ let
       }
     );
 
+  # Race-instrumented variant of an existing buildGoApplication-derived
+  # derivation. Sets CGO_ENABLED, appends `-race` to buildFlagsArray (so
+  # the `go install` that produces $out/bin/* picks it up), and overrides
+  # checkPhase to also pass `-race` to `go test`. The caller's existing
+  # checkPhase tags / -p handling are preserved by passing them in via
+  # the `tags` arg — propagation from `old.tags` is unreliable when the
+  # base derivation inlines tags directly into its checkPhase.
+  buildGoRace =
+    {
+      base,
+      tags ? [ ],
+      pnameSuffix ? "-race",
+    }:
+    base.overrideAttrs (old: {
+      pname = "${old.pname}${pnameSuffix}";
+      CGO_ENABLED = 1;
+      # buildFlagsArray must be set as a true bash array via preBuild,
+      # not as a nix list attr — see buildGoCover.preBuild for details.
+      preBuild = (old.preBuild or "") + ''
+        buildFlagsArray+=("-race")
+      '';
+      checkPhase = ''
+        runHook preCheck
+        go test ${
+          if tags == [ ] then "" else "-tags ${concatStringsSep "," tags}"
+        } -race -p $NIX_BUILD_CORES ./...
+        runHook postCheck
+      '';
+    });
+
+  # Coverage-instrumented variant of an existing buildGoApplication-derived
+  # derivation. Builds the binary with `go build -cover -covermode=atomic`,
+  # then runs `coverIntegrationCommand` (a phase fragment supplied by the
+  # caller) under a fresh $GOCOVERDIR. After the integration command, the
+  # helper:
+  #   - copies the binary covdata fragments to $out/covdata/  (mergeable)
+  #   - converts them to textfmt at $out/coverage.out         (inspectable)
+  #
+  # The caller's `coverIntegrationCommand` runs against
+  # `$out/bin/<binary>` with $GOCOVERDIR already exported. It is
+  # responsible for whatever test plumbing it needs (binary-path env
+  # vars, staging files, etc.).
+  #
+  # `extraNativeInstallCheckInputs` is a separate arg because adding
+  # them via `nativeInstallCheckInputs = old.nativeInstallCheckInputs
+  # ++ [...]` inside `overrideAttrs` doesn't always propagate them onto
+  # PATH at install-check time when the base derivation merges
+  # installCheck attrs from another attrset.
+  buildGoCover =
+    {
+      base,
+      coverIntegrationCommand,
+      pnameSuffix ? "-cli-cover",
+      extraNativeInstallCheckInputs ? [ ],
+    }:
+    base.overrideAttrs (old: {
+      pname = "${old.pname}${pnameSuffix}";
+
+      # buildFlagsArray must be set as a true bash array, not via a
+      # nix list attr — stdenv serializes list attrs to the env as
+      # space-joined strings, which goBuildHook's `declare -p` treats
+      # as a single argv entry. That breaks for multi-flag values like
+      # `-cover -covermode=atomic`. Setting it in preBuild puts it in
+      # the bash environment as an actual array, which `declare -p`
+      # round-trips correctly.
+      preBuild = (old.preBuild or "") + ''
+        buildFlagsArray+=("-cover" "-covermode=atomic")
+      '';
+
+      # If the base derivation invokes the instrumented binary during
+      # postInstall, the cover runtime emits "GOCOVERDIR not set, no
+      # coverage data emitted" to stderr. Coverage data from a
+      # postInstall run isn't useful here (the real capture happens in
+      # installCheckPhase), so route fragments to a discardable scratch
+      # dir before running the existing postInstall.
+      postInstall = ''
+        export GOCOVERDIR="$(mktemp -d)"
+      ''
+      + (old.postInstall or "");
+
+      doInstallCheck = true;
+      nativeInstallCheckInputs =
+        (old.nativeInstallCheckInputs or [ ]) ++ extraNativeInstallCheckInputs;
+      installCheckPhase = ''
+        runHook preInstallCheck
+
+        gocover_data="$(mktemp -d)"
+        export GOCOVERDIR="$gocover_data"
+
+        ${coverIntegrationCommand}
+
+        mkdir -p $out/covdata $out
+        cp -r "$gocover_data"/* $out/covdata/
+        go tool covdata textfmt -i="$gocover_data" -o="$out/coverage.out"
+
+        runHook postInstallCheck
+      '';
+    });
+
 in
 {
   inherit
     buildGoApplication
+    buildGoRace
+    buildGoCover
     mkGoEnv
     mkVendorEnv
     mkGoCacheEnv

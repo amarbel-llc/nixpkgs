@@ -628,6 +628,8 @@ with pkgs;
 
   inherit (callPackage ../build-support/gomod2nix { })
     buildGoApplication
+    buildGoRace
+    buildGoCover
     mkGoEnv
     mkVendorEnv
     mkGoCacheEnv
