@@ -164,6 +164,87 @@ NixOS):
 plugin-files = /nix/store/...-go2nix-nix-plugin/lib/nix/plugins/libgo2nix_plugin.so
 ```
 
+## Cross-flake Go-module composition
+
+The codegen-at-Nix-build-time vision (see Problem Statement) hinges
+on a question bigger than the choice between gomod2nix and go2nix:
+**how does a Go module exposed by one Nix flake get imported into
+another Go module's Nix flake?** Today, cross-repo Go composition is
+owned end-to-end by `go.mod` / `go.sum` / `replace` directives; Nix
+only packages the result Go has already resolved. When the producer
+flake's output is itself a generated Go source tree (e.g.
+`dagnabit`'s graph export, `tommy`'s code generation), there is no
+Nix-native path to feed that output into a consumer's Go module
+without round-tripping through Go's module system.
+
+Two strategies are in play, at different points on the ambition axis.
+
+### Path A — Bridge: synthesize `go.mod` replace directives from flake inputs
+
+Keep `go.mod` as the integration point, but make a flake input drive
+the `replace` line. gomod2nix's `buildGoApplication` already symlinks
+local-path replaces from `go.mod` into `vendor/<name>` at build time
+(the `localReplaceAttrs` / `commands` block in
+`pkgs/build-support/gomod2nix/default.nix`). Extend the builder with
+a `goFlakeInputs` arg accepting a map of Go module path → flake-input
+derivation; an intermediate Nix-eval-time derivation runs `go mod edit
+-replace=<module>=<input>/...` to overlay those entries onto the
+organic `go.mod`, and the merged file is what `mkVendorEnv` sees.
+
+Resolved sub-decisions:
+
+1. **Merge primitive: `go mod edit -replace`.** Synthetic deps overlay
+   onto the organic `go.mod`; only flake-input-driven entries are
+   synthetic. Most projects have a mix — `cobra`, `golang.org/x/...`,
+   etc. stay organic. The version pin in the organic `require` line
+   becomes vestigial: the replace path wins at build time.
+2. **Inline derivation arg, not a manifest file.** Caller passes
+   `goFlakeInputs` directly to the builder; no separate
+   `flake-go-inputs.toml` or equivalent. Single source of truth for
+   synthetic versions = the flake input rev (via `flake.lock`).
+3. **Local `go build` outside nix is unsupported.** All Go work
+   happens inside `nix develop` or via `nix build`. The merged
+   `go.mod` is the only file the build sees; no dual-path concerns.
+   `mkGoEnv` and `buildGoApplication` apply the same merge logic;
+   `go.work` indirection becomes unnecessary.
+
+Lockstep collapse: bumping a sibling Go module today requires editing
+three places in lockstep — `go.mod`'s pseudo-version,
+`gomod2nix.toml`'s hash, `flake.lock`'s rev. With the bridge, only
+the flake-input rev matters; the merged `go.mod`'s replace points at
+the new store path automatically, and `gomod2nix.toml` only tracks
+the *organic* surface.
+
+Status: **exploratory, not implemented.** The motivating bug —
+madder's `dodder-blob_store-config` → `blob_store-config` rename,
+where the flake input bumped but `go.mod`'s pin lagged into a
+runtime panic — is resolvable by hand. When the rename pattern bites
+again, or when a new fork project hits the same shape, the bridge is
+the starting point.
+
+Adjacent infra issues surfaced during the originating investigation:
+[amarbel-llc/dodder#125](https://github.com/amarbel-llc/dodder/issues/125),
+[amarbel-llc/dodder#126](https://github.com/amarbel-llc/dodder/issues/126),
+[amarbel-llc/clown#39](https://github.com/amarbel-llc/clown/issues/39).
+
+### Path B — Native: `resolveGoPackages` across flake inputs
+
+The fully-Nix-native path. numtide go2nix's plugin exposes
+`builtins.resolveGoPackages`, which the default-mode builder calls
+during evaluation. Whether that resolution can reach across flake
+inputs — whether a producer flake can expose its Go package graph as
+a Nix value the consumer's `resolveGoPackages` will consume, without
+each flake re-vendoring the full transitive package graph — is not
+clear from the upstream docs. This is the most consequential
+unanswered question for the codegen ambition and is logically prior
+to migrating any fork repo to go2nix.
+
+If path B is viable, path A becomes a transitional shim. If path B
+is fundamentally limited (e.g. `resolveGoPackages` cannot cross
+flake boundaries), path A is likely the durable answer and go2nix's
+value proposition narrows to per-package cache reuse within a single
+flake.
+
 ## Limitations
 
 - **Upstream is experimental.** numtide/go2nix's README explicitly warns
@@ -205,26 +286,6 @@ plugin-files = /nix/store/...-go2nix-nix-plugin/lib/nix/plugins/libgo2nix_plugin
   `go install`, and `-race` / `-cover` interact differently at that
   level. Concrete experimentation needed before a recommendation.
 
-- **Open question: cross-flake Go-module composition without going
-  through `go`.** The codegen-at-Nix-build-time vision (see Problem
-  Statement) needs an answer to a question that's bigger than this
-  builder choice: **how does a Go module exposed by one Nix flake get
-  imported into another Go module's Nix flake natively in Nix terms,
-  rather than round-tripping through Go's module system?** Today,
-  cross-repo Go composition is owned end-to-end by `go.mod` /
-  `go.sum` / `replace` directives; Nix only packages the result that
-  Go has already resolved. If `dagnabit`'s Nix-built graph export (or
-  `tommy`'s code generation, etc.) is to be consumed by another
-  flake's Go module without that consumer re-running the generator,
-  the consumer flake needs to pull the generated Go sources (or
-  per-package derivations) from the producer flake at the Nix layer.
-  numtide go2nix's default mode resolves package paths via the Nix
-  plugin's `builtins.resolveGoPackages`; whether that resolution can
-  reach across flake inputs (or whether each flake has to vendor the
-  full transitive package graph) is not clear from the upstream docs.
-  This is the most consequential unanswered question for the codegen
-  ambition and is logically prior to migrating any fork repo.
-
 - **Per-package caching's win is monorepo-shaped.** The benefit only
   shows up when (a) the project has many packages, (b) builds are run
   often enough that cache reuse matters, and (c) changes are typically
@@ -244,6 +305,13 @@ plugin-files = /nix/store/...-go2nix-nix-plugin/lib/nix/plugins/libgo2nix_plugin
   `buildGoApplication` (`pkgs/build-support/gomod2nix/default.nix`).
   Composition story between those wrappers and numtide go2nix is
   open — see Limitations.
+- Issue
+  [amarbel-llc/nixpkgs#12](https://github.com/amarbel-llc/nixpkgs/issues/12)
+  is the originating exploration of "flake input as canonical Go
+  module source." Its strategic framing and resolved sub-decisions
+  were absorbed into the *Cross-flake Go-module composition* section
+  above; the issue stays open as a tracking surface for the next
+  trigger event.
 - Downstream consumers expected to evaluate against this FDR:
   `dagnabit`, `madder`, `maneater`, `dodder`, `chrest`, `nebulous`. Each
   should track its own decision in a downstream FDR pointing here.
