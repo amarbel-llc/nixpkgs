@@ -75,6 +75,11 @@ let
       # MADDER_BIN; consumers pick whatever name their tests expect).
       binaryEnvVarName ? "BATS_BIN",
 
+      # Additional env vars to export before invoking bats. Map of
+      # NAME → value. Values are shell-escaped via lib.escapeShellArg.
+      # Use for BATS_TEST_TIMEOUT, custom debug flags, config toggles.
+      extraEnv ? { },
+
       # Additional files to copy into the staging dir alongside the
       # bats sources. Each entry is { src; dest; } where `dest` is a
       # path relative to the staging root (which contains the
@@ -102,6 +107,13 @@ let
       filterFlag =
         lib.optionalString (filter != "") "--filter-tags '${filter}'";
 
+      extraEnvExports =
+        lib.concatStringsSep "\n" (
+          lib.mapAttrsToList
+            (name: value: "export ${name}=${lib.escapeShellArg value}")
+            extraEnv
+        );
+
       extraStagingCommands =
         lib.concatMapStringsSep "\n"
           (entry: "cp ${entry.src} stage/${entry.dest}")
@@ -123,6 +135,7 @@ let
 
         export ${binaryEnvVarName}="${base}/bin/${binaryName}"
         ${libPathExport}
+        ${extraEnvExports}
 
         cd stage/zz-tests_bats
         ${bats}/bin/bats \
