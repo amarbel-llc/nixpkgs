@@ -18,6 +18,7 @@
   lib,
   runCommand,
   bats,
+  parallel,
 }:
 
 let
@@ -108,7 +109,10 @@ let
     in
     runCommand derivationName
       {
-        inherit nativeBuildInputs;
+        # parallel is required by `bats --jobs` (>1); included
+        # unconditionally so consumers don't get a runtime
+        # "parallel: command not found" surprise.
+        nativeBuildInputs = nativeBuildInputs ++ [ parallel ];
       }
       ''
         mkdir -p stage/zz-tests_bats
