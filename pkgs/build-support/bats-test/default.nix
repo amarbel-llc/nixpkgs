@@ -6,11 +6,22 @@
   consumers (madder, dodder, …) to surface per-tag test lanes as flake
   outputs without rebuilding Go per filter.
 
-  The builder takes a binary by store-path reference (`base`), stages
-  the bats source tree into a writable scratch dir, exports a
-  caller-named env var pointing at the binary, optionally extends
+  The builder takes one or more binaries by store-path reference,
+  stages the bats source tree into a writable scratch dir, exports
+  caller-named env vars pointing at each binary, optionally extends
   `BATS_LIB_PATH`, and runs `bats *.bats` with an optional `--filter-tags`
   expression. Output is a stamp file (touched on success).
+
+  Two binary-export forms are accepted:
+  - **single-binary shortcut**: `base` + `binaryName` + (optional)
+    `binaryEnvVarName`. The most common case.
+  - **multi-binary**: `binaries` map of ENV_VAR_NAME → { base; name; }.
+    Use when a suite needs more than one binary in scope, or when the
+    binaries live in different derivations.
+
+  When `binaries` is set, the shortcut args are ignored except `base`
+  is still consulted as the naming anchor for the default derivation
+  name.
 
   See amarbel-llc/nixpkgs#14 for the design rationale.
 */
@@ -35,19 +46,21 @@ let
 
   batsLane =
     {
-      # Pre-built derivation containing the binary under test at
-      # ${base}/bin/${binaryName}. Caller is responsible for ensuring
-      # `base` is built (typically a buildGoApplication-derived
-      # derivation).
-      base,
+      # Single-binary shortcut: pre-built derivation containing the
+      # binary under test at ${base}/bin/${binaryName}. Caller is
+      # responsible for ensuring `base` is built (typically a
+      # buildGoApplication-derived derivation). Also used as the naming
+      # anchor for the default derivation name (`${base.pname}-bats-...`)
+      # — left consulted even when `binaries` is set.
+      base ? null,
 
       # Directory containing the *.bats test files. Copied recursively
       # into the staging scratch dir.
       batsSrc,
 
-      # Subpath under ${base}/bin that the test binary lives at. No
-      # default — explicit is safer than inferring from base.pname.
-      binaryName,
+      # Single-binary shortcut: subpath under ${base}/bin that the
+      # test binary lives at.
+      binaryName ? null,
 
       # `bats --filter-tags` expression. Empty string means no filter
       # (run all tests). The flag is conditionally omitted when empty.
@@ -70,10 +83,22 @@ let
       # When empty, BATS_LIB_PATH is left unchanged.
       batsLibPath ? [ ],
 
-      # Name of the env var set to ${base}/bin/${binaryName}. Tests
-      # consult this var to locate the binary under test (madder reads
-      # MADDER_BIN; consumers pick whatever name their tests expect).
+      # Single-binary shortcut: name of the env var set to
+      # ${base}/bin/${binaryName}. Tests consult this var to locate the
+      # binary under test (madder reads MADDER_BIN; consumers pick
+      # whatever name their tests expect). Ignored when `binaries` is
+      # set.
       binaryEnvVarName ? "BATS_BIN",
+
+      # Multi-binary form: map of ENV_VAR_NAME → { base; name; }. Each
+      # entry exports `<ENV_VAR_NAME>=${spec.base}/bin/${spec.name}`
+      # before bats runs. Use this when a suite needs more than one
+      # binary in scope (e.g. a CLI plus a sibling tool), or when the
+      # binaries live in different derivations. When set, supersedes
+      # the single-binary shortcut args (`base`/`binaryName`/
+      # `binaryEnvVarName` are ignored for env-var purposes; `base` is
+      # still used as a naming anchor if present).
+      binaries ? null,
 
       # Additional env vars to export before invoking bats. Map of
       # NAME → value. Values are shell-escaped via lib.escapeShellArg.
@@ -98,11 +123,38 @@ let
       nativeBuildInputs ? [ ],
     }:
     let
+      # Single-binary shortcut synthesizes into the multi-binary form
+      # so there's only one downstream code path.
+      resolvedBinaries =
+        if binaries != null then
+          binaries
+        else if base != null && binaryName != null then
+          { ${binaryEnvVarName} = { inherit base; name = binaryName; }; }
+        else
+          throw "testers.batsLane: either `binaries` or both `base` and `binaryName` must be set";
+
+      # Naming anchor for the default derivation name. Prefer top-level
+      # `base.pname` (works for both shortcut and multi-binary forms);
+      # fall back to the first entry's base.pname when `binaries` is
+      # the only form set.
+      namingPname =
+        if base != null then
+          base.pname
+        else
+          (lib.head (lib.attrValues resolvedBinaries)).base.pname;
+
       derivedSuffix =
         if filter != "" then sanitizeFilter filter else "all";
 
       derivationName =
-        if name != null then name else "${base.pname}-bats-${derivedSuffix}";
+        if name != null then name else "${namingPname}-bats-${derivedSuffix}";
+
+      binaryExports =
+        lib.concatStringsSep "\n" (
+          lib.mapAttrsToList
+            (envVar: spec: ''export ${envVar}="${spec.base}/bin/${spec.name}"'')
+            resolvedBinaries
+        );
 
       libPathExport =
         lib.optionalString (batsLibPath != [ ]) ''
@@ -143,7 +195,7 @@ let
 
         ${extraStagingCommands}
 
-        export ${binaryEnvVarName}="${base}/bin/${binaryName}"
+        ${binaryExports}
         ${libPathExport}
         ${extraEnvExports}
 
