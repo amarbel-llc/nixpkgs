@@ -80,6 +80,13 @@ let
       # Use for BATS_TEST_TIMEOUT, custom debug flags, config toggles.
       extraEnv ? { },
 
+      # Extra args appended to the `bats` invocation, after `--jobs`
+      # and `--filter-tags` and before `*.bats`. Each entry is
+      # shell-escaped. Use for `--tag-expr`, `--no-parallelize-within-files`,
+      # `--print-output-on-failure`, and other bats flags the builder
+      # doesn't surface as first-class args.
+      extraBatsArgs ? [ ],
+
       # Additional files to copy into the staging dir alongside the
       # bats sources. Each entry is { src; dest; } where `dest` is a
       # path relative to the staging root (which contains the
@@ -114,6 +121,9 @@ let
             extraEnv
         );
 
+      extraBatsArgsStr =
+        lib.concatMapStringsSep " " lib.escapeShellArg extraBatsArgs;
+
       extraStagingCommands =
         lib.concatMapStringsSep "\n"
           (entry: "cp ${entry.src} stage/${entry.dest}")
@@ -141,6 +151,7 @@ let
         ${bats}/bin/bats \
           --jobs $NIX_BUILD_CORES \
           ${filterFlag} \
+          ${extraBatsArgsStr} \
           *.bats
 
         touch $out
