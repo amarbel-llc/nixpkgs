@@ -43,6 +43,7 @@
             claude-code
             gomod2nix
             ;
+          nix-man = pkgs.nix.man;
           default = pkgs.claude-code;
         }
       );
@@ -55,6 +56,7 @@
         {
           claude-code = pkgs.claude-code;
           gomod2nix = pkgs.gomod2nix;
+          nix-man = pkgs.nix.man;
         }
       );
 
