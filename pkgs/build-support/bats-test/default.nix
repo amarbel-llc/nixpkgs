@@ -9,7 +9,8 @@
   The builder takes one or more binaries by store-path reference,
   stages the bats source tree into a writable scratch dir, exports
   caller-named env vars pointing at each binary, optionally extends
-  `BATS_LIB_PATH`, and runs `bats *.bats` with an optional `--filter-tags`
+  `BATS_LIB_PATH`, and runs bats against a caller-controlled list of
+  test files (default `*.bats`) with an optional `--filter-tags`
   expression. Output is a stamp file (touched on success).
 
   Two binary-export forms are accepted:
@@ -106,11 +107,21 @@ let
       extraEnv ? { },
 
       # Extra args appended to the `bats` invocation, after `--jobs`
-      # and `--filter-tags` and before `*.bats`. Each entry is
-      # shell-escaped. Use for `--tag-expr`, `--no-parallelize-within-files`,
-      # `--print-output-on-failure`, and other bats flags the builder
-      # doesn't surface as first-class args.
+      # and `--filter-tags` and before the test-file arguments. Each
+      # entry is shell-escaped. Use for `--tag-expr`,
+      # `--no-parallelize-within-files`, `--print-output-on-failure`,
+      # and other bats flags the builder doesn't surface as first-class
+      # args.
       extraBatsArgs ? [ ],
+
+      # Trailing positional arguments handed to bats — paths or shell
+      # globs (relative to `stage/zz-tests_bats/`) of the test files to
+      # run. Entries are joined with spaces and NOT shell-escaped, so
+      # bash expands globs as usual. Default `[ "*.bats" ]` keeps the
+      # flat-layout behavior; consumers with nested suites can pass
+      # something like
+      # `[ "current_version/*.bats" "previous_versions/main.bats" ]`.
+      testFiles ? [ "*.bats" ],
 
       # Additional files to copy into the staging dir alongside the
       # bats sources. Each entry is { src; dest; } where `dest` is a
@@ -176,6 +187,8 @@ let
       extraBatsArgsStr =
         lib.concatMapStringsSep " " lib.escapeShellArg extraBatsArgs;
 
+      testFilesStr = lib.concatStringsSep " " testFiles;
+
       extraStagingCommands =
         lib.concatMapStringsSep "\n"
           (entry: "cp ${entry.src} stage/${entry.dest}")
@@ -204,7 +217,7 @@ let
           --jobs $NIX_BUILD_CORES \
           ${filterFlag} \
           ${extraBatsArgsStr} \
-          *.bats
+          ${testFilesStr}
 
         touch $out
       '';
