@@ -8,7 +8,7 @@ buildGoDir() {
 
     declare -a flags
     flags+=($buildFlags "${buildFlagsArray[@]}")
-    flags+=(${tags:+-tags=${tags}})
+    flags+=(${tags:+-tags="${tags}"})
     flags+=(${ldflags:+-ldflags="$ldflags"})
     flags+=("-v" "-p" "$NIX_BUILD_CORES")
 
