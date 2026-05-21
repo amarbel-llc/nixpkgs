@@ -1,0 +1,52 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# Run a command inside the PoC devShell (go toolchain).
+# Deletes flake.lock first to dodge NAR-hash mismatches caused by the live
+# worktree input. See zz-pocs/rolldown-poc/README.md for full explanation.
+_in-shell +cmd:
+    rm -f flake.lock
+    nix develop --command bash -c {{ quote(cmd) }}
+
+# Stage any untracked files so Nix's dirty-tree scan can see them.
+_stage-untracked:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    untracked=$(git ls-files --others --exclude-standard -- . || true)
+    if [[ -n "$untracked" ]]; then
+        echo "$untracked" | xargs -r git add -N --
+    fi
+
+# Phase 1: host-side go build, with `.flake-inputs/poc-lib` symlinked to
+# the local `./upstream/` source. Confirms Go accepts the replace pattern
+# before involving nix.
+[group('explore')]
+host-build: _stage-untracked
+    just _in-shell '\
+      mkdir -p .flake-inputs && \
+      ln -sfn ../upstream .flake-inputs/poc-lib && \
+      go build -o result-host . && \
+      ./result-host'
+
+# Phase 2: build the derivation in the nix sandbox via buildGoModule.
+# preBuild symlinks ${inputs.poc-lib} into `.flake-inputs/poc-lib`.
+[group('explore')]
+nix-build: _stage-untracked
+    rm -f flake.lock
+    nix build --print-build-logs .#default
+    ./result/bin/goflake-poc
+
+# Phase 3: build via the fork's buildGoApplication (gomod2nix). EXPECTED
+# TO FAIL today — the bridge pattern surfaces a structural mismatch with
+# buildGoApplication's eval-time local-replace handling. See README §
+# "Phase 3" and docs/features/0001-numtide-go2nix-overlay-builder.md
+# (`goFlakeInputs` proposal) for the fix.
+[group('explore')]
+nix-build-via-gomod2nix: _stage-untracked
+    rm -f flake.lock
+    nix build --print-build-logs .#via-gomod2nix
+    ./result/bin/goflake-poc-via-gomod2nix
+
+# Clean transient artifacts.
+[group('explore')]
+clean:
+    rm -rf .flake-inputs result result-host flake.lock
