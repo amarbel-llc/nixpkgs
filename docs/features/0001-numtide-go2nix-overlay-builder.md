@@ -215,12 +215,79 @@ the flake-input rev matters; the merged `go.mod`'s replace points at
 the new store path automatically, and `gomod2nix.toml` only tracks
 the *organic* surface.
 
-Status: **exploratory, not implemented.** The motivating bug —
-madder's `dodder-blob_store-config` → `blob_store-config` rename,
-where the flake input bumped but `go.mod`'s pin lagged into a
-runtime panic — is resolvable by hand. When the rename pattern bites
-again, or when a new fork project hits the same shape, the bridge is
-the starting point.
+Status: **foundational mechanic validated by POC; builder integration
+not implemented.** The motivating bug — madder's
+`dodder-blob_store-config` → `blob_store-config` rename, where the flake
+input bumped but `go.mod`'s pin lagged into a runtime panic — is
+resolvable by hand. When the rename pattern bites again, or when a new
+fork project hits the same shape, the bridge is the starting point.
+
+#### POC findings (commit f99a3ff43278, `zz-pocs/goflake-poc/`)
+
+A three-phase probe of the bridge pattern's foundation:
+`require <module> v0.0.0-<sentinel-pseudo>` +
+`replace => ./.flake-inputs/<name>`, with the nix builder
+symlinking the flake input's source into `.flake-inputs/<name>`
+at build time.
+
+1. **Bare `go build`: PASS.** The minimum syntactically-valid sentinel
+   pseudo-version `v0.0.0-00010101000000-000000000000` is accepted by
+   `module.CanonicalVersion` (and thus `modfile.Parse` with a nil
+   fixer), the symlinked local-path replace resolves cleanly, no
+   `go.sum` entry is required for the replaced module.
+
+2. **`buildGoModule`: PASS** with two non-default knobs:
+   `vendorHash = null` + `proxyVendor = true` (suppresses
+   buildGoModule's auto-`-mod=vendor`; see
+   `nixpkgs/pkgs/build-support/go/module.nix` line ~232) and
+   `subPackages = ["."]` (prevents subpackage discovery from walking
+   into the symlinked replace target, which is a separate Go module).
+   `preBuild` symlinks the flake input's store path into
+   `.flake-inputs/<name>` at build time.
+
+3. **`buildGoApplication`: FAIL.** This is the concrete blocker the
+   `goFlakeInputs` extension must address. The existing
+   `localReplaceCommands` block
+   (`pkgs/build-support/gomod2nix/default.nix:198-205`):
+
+   ```nix
+   mkdir -p $(dirname vendor/${name})
+   ln -s ${pwd + "/${value.path}"} vendor/${name}
+   ```
+
+   evaluates `pwd + "/${value.path}"` as a Nix path at eval time and
+   imports it into the store. For our pattern, `value.path =
+   "./.flake-inputs/<name>"`, which is gitignored and only created at
+   build time. Result:
+
+   ```
+   error: Path '…/.flake-inputs/<name>' in the repository … is not
+   tracked by Git.
+   ```
+
+   No `proxyVendor`-equivalent escape hatch exists on
+   `buildGoApplication`.
+
+**Implications for `goFlakeInputs` implementation.** Any implementation
+must avoid the eval-time path import for synthetic, flake-input-driven
+replaces. Two natural shapes:
+
+- **Eval-time substitution.** Accept `goFlakeInputs` as
+  `{ "<go-module-path>" = <flake-input-derivation>; }`. Inject those
+  entries into `mkVendorEnv` *parallel to* `goMod.replace`, but with
+  the symlink target taken directly from the flake-input derivation
+  rather than reconstructed via `pwd + "/${value.path}"`. The synthetic
+  entries never need to exist on the source filesystem.
+- **Build-time deferral.** Move the local-replace symlinking out of the
+  vendor-FOD and into a `postUnpack`/`preBuild` phase of the main
+  derivation, mirroring `buildGoModule`'s approach. More invasive but
+  decouples the timing entirely.
+
+The eval-time substitution shape is the smaller change and matches the
+FDR's earlier framing ("an intermediate Nix-eval-time derivation runs
+`go mod edit -replace=<module>=<input>/...`"). Either way, the POC
+pinpoints the exact lines that need to change. Tracking issue:
+[amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/issues/32).
 
 Adjacent infra issues surfaced during the originating investigation:
 [amarbel-llc/dodder#125](https://github.com/amarbel-llc/dodder/issues/125),
