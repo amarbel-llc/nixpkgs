@@ -19,17 +19,80 @@ promotion-criteria: |
 
 # RFC 0001 — flake-input-go_mod protocol
 
+## Conventions
+
+The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD
+NOT, RECOMMENDED, MAY, and OPTIONAL in this document are to be
+interpreted as described in RFC 2119 and RFC 8174 when, and only when,
+they appear in all capitals.
+
 ## Abstract
 
-(filled in Task 2)
+The flake-input-go_mod protocol specifies a Nix mechanism for
+cross-flake Go module composition. It has two halves that compose
+end-to-end: a consumer half (`goFlakeInputs`, an argument to
+`buildGoApplication` and `mkGoEnv`) and a producer half
+(`packages.${system}.go-pkgs`, a conventional flake output, optionally
+constructed via `mkGoPkgs`). The protocol replaces the three-place
+lockstep — `go.mod` pseudo-version, `gomod2nix.toml` NAR hash, and
+`flake.lock` rev — with a single source of truth: the flake input's
+rev as recorded in `flake.lock`. The consumer's merged `go.mod`
+synthesizes the appropriate `replace` directive at eval time; the
+producer publishes a stable, optionally-filtered source tree at the
+conventional attribute.
 
 ## Terminology
 
-(filled in Task 2)
+For the purposes of this RFC:
+
+- **Producer** — a flake whose output is a Go source tree intended for
+  consumption by other flakes. A producer MUST expose its canonical Go
+  source tree as `packages.${system}.go-pkgs`.
+- **Consumer** — a flake that depends on one or more producers' Go
+  source trees through Nix flake inputs. A consumer MUST declare those
+  dependencies through `goFlakeInputs`.
+- **Bridge** — the eval-time merge step that combines the consumer's
+  organic `go.mod` with synthetic `replace` directives derived from
+  `goFlakeInputs`. The bridge implementation lives in this fork's
+  `buildGoApplication` and `mkGoEnv`.
+- **Middleware** — a function `src -> src` (derivation to derivation)
+  that transforms a Go source tree. Middlewares compose left-to-right
+  in the `mkGoPkgs.middlewares` pipeline. Examples include source
+  filters, codegen passes, and format normalizers.
+- **`goFlakeInputs`** — the consumer-side bridge argument. An attrset
+  mapping Go module paths to flake-input derivations (or `{ src;
+  subPath; }` records). Specified normatively in §
+  *Consumer interface: `goFlakeInputs`*.
+- **`go-pkgs`** — the conventional flake output attribute name for a
+  producer's Go source tree. Specified normatively in §
+  *Producer interface: `packages.${system}.go-pkgs` and `mkGoPkgs`*.
+- **`gomod.nix`** — the conventional colocation file on the consumer
+  side that lifts the `goFlakeInputs` attrset out of the
+  `buildGoApplication` call. Specified normatively in §
+  *Consumer convention: `gomod.nix` colocation*.
 
 ## Protocol overview
 
-(filled in Task 2)
+The protocol has two complementary halves. On the producer side, a
+flake exposes its Go source tree as `packages.${system}.go-pkgs` — a
+derivation whose output is a directory containing a Go module
+(`go.mod` at the root, importable packages in subdirectories). On the
+consumer side, a flake declares which producers it depends on by
+passing `goFlakeInputs` to `buildGoApplication` and `mkGoEnv`; the
+bridge merges synthetic `replace` directives into the consumer's
+`go.mod` at Nix eval time, pointing each declared Go module path at
+the producer's `go-pkgs` store path.
+
+The protocol exists to close the lockstep-drift class. Without the
+bridge, cross-repo Go composition in this fork requires editing three
+places in lockstep: `go.mod`'s pseudo-version, `gomod2nix.toml`'s NAR
+hash, and `flake.lock`'s rev of the sibling-module input. When any of
+these drifts, the build still succeeds — each layer is internally
+consistent — but the binary runs against the wrong version of the
+sibling. The bridge collapses the lockstep so that only the flake
+input rev matters: the merged `go.mod`'s `replace` points at the new
+store path automatically, and `gomod2nix.toml` only tracks the
+*organic* (non-bridged) surface.
 
 ## Consumer interface: `goFlakeInputs`
 
