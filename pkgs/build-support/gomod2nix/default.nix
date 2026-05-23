@@ -79,7 +79,7 @@ let
 
   inherit (import ./parser.nix) parseGoMod parseGoWork;
 
-  internals = import ./internals.nix { inherit lib; };
+  internals = import ./internals.nix { };
   inherit (internals) normalizeFlakeInput;
 
   # Internal only build-time attributes

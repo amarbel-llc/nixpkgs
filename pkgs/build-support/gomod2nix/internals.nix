@@ -1,4 +1,4 @@
-{ lib }:
+{ }:
 {
   # Normalize a goFlakeInputs value into { src, subPath } form.
   # Accepts:
