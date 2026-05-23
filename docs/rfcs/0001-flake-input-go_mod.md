@@ -600,12 +600,168 @@ the fork has surfaced so far.
 
 ## Limitations
 
-(filled in Task 8)
+The following limitations are known at protocol-design time. Each is
+marked **open** (active gap, may be addressed by future revisions) or
+**deferred** (out of scope, tracked elsewhere) with a pointer to the
+relevant issue.
+
+### Consumer side
+
+- **Caller manages the `require` line in `go.mod`.** *(open.)* The
+  consumer MUST keep a syntactically valid
+  `require <module> v0.0.0-<sentinel>` entry in `go.mod` alongside
+  declaring `goFlakeInputs`. Auto-injecting the `require` via
+  `go mod edit -require` at eval time is a follow-up ergonomics fix;
+  the bridge mechanic itself does not depend on it.
+
+- **Transitive deps of the flake input.** *(deferred to
+  [nixpkgs#36](https://github.com/amarbel-llc/nixpkgs/issues/36).)*
+  Organic transitive deps come in through the producer's
+  `gomod2nix.toml`, which the bridge unions with the consumer's
+  (consumer wins on conflict). Flake-input-driven transitive deps are
+  inherited from `passthru.goFlakeInputs` at depth-1 only (see §
+  *Multi-producer closures: `follows` + passthru inheritance*).
+  Deeper-than-one-level inheritance — full FOD-regen of the merged
+  module set — is the dedicated tracking issue.
+
+- **Source-only inputs assumed.** *(open.)* `goFlakeInputs` entries
+  MUST be derivations whose output is a Go module source tree (own
+  `go.mod`, importable packages). Pre-built binaries or non-Go outputs
+  are out of scope; the bridge has no opinion about how to consume
+  them.
+
+- **No `go build` outside Nix.** *(open, by design.)* This fork's Go
+  projects already require `nix develop` for the toolchain; the bridge
+  preserves that constraint. Editor and language-server workflows that
+  parse `go.mod` directly may need the merged form materialized into
+  the workspace; the materialization step is a follow-up.
+
+- **No interaction defined with `buildGoRace` / `buildGoCover`.**
+  *(open.)* These wrappers `overrideAttrs` on a
+  `buildGoApplication`-produced derivation. They SHOULD be unaffected
+  by `goFlakeInputs` (the merge happens before they wrap), but this
+  needs concrete verification.
+
+- **Missing-call-site lint.** *(deferred to
+  [nixpkgs#41](https://github.com/amarbel-llc/nixpkgs/issues/41).)*
+  Every `buildGoApplication` and `mkGoEnv` call in a consumer that
+  consumes the same `gomod2nix.toml` MUST receive the same
+  `goFlakeInputs` value. There is no enforcement today; missing
+  call sites silently resurrect lockstep drift.
+
+### Producer side
+
+- **Multi-module repos.** *(open.)* A flake exposing several distinct
+  Go modules cannot consolidate them under a single
+  `packages.${system}.go-pkgs`. Naming for additional modules is left
+  unspecified; a plausible future convention is
+  `go-pkgs-<module-name>` (e.g. `go-pkgs-server`, `go-pkgs-client`),
+  to be settled in this RFC or a successor when the first multi-module
+  producer arrives.
+
+- **Middleware ordering.** *(open.)* Composition is left-to-right via
+  `foldl'`. Producers MUST order middlewares according to data-flow
+  dependencies (e.g. codegen before formatters, formatters before
+  linters). Out-of-order pipelines may succeed but produce
+  inconsistent outputs; there is no built-in dependency resolution.
+
+- **`subPath` does not slice middleware input.** *(open.)* Middlewares
+  operate on the full `src` derivation. If a middleware should only
+  run against a subtree of the producer's repo, that is the
+  middleware's responsibility to handle internally (e.g.
+  `cd $out/go && dagnabit export`). The convention does not push
+  `subPath` semantics into the middleware contract because that would
+  couple producer and consumer slicing decisions.
+
+- **Per-package caching is not addressed.** *(deferred to
+  [FDR-0001](../features/0001-numtide-go2nix-overlay-builder.md).)*
+  This RFC defines the *shape* of producer output; cache reuse at
+  Go-package granularity (e.g. when one facade rotates, other facades
+  stay cached in downstream builds) is the concern of the numtide
+  go2nix evaluation. The two compose: this RFC delivers generated
+  source trees, FDR-0001's eventual work caches the resulting package
+  compilations.
+
+### Source-filter side
+
+- **Regex, not globs.** *(open, by upstream constraint.)* `extras` are
+  POSIX extended-regex strings (`builtins.match` semantics) because
+  nixpkgs stdlib does not ship glob matching and `goSourceFilter`
+  declines to invent new syntax.
+
+- **Store-path naming preserves `src.name`.** *(open.)* The default
+  naming is documented in § *Source filtering: `goSourceFilter`* §
+  *Store-path naming*. Whether `${src.name}-go-source` would be more
+  diagnostic is left to the first real adoption (tommy) to surface.
+
+- **Single-tree assumption.** *(open.)* `goSourceFilter` operates on
+  `src` as a single tree. Multi-module repos with separate Go modules
+  in different subdirectories need per-module filter invocations.
 
 ## Open questions
 
-(filled in Task 8)
+The following items are unresolved at RFC-publication time. Each will
+be revisited as the protocol promotes through `proposed → experimental
+→ testing`.
+
+1. **Lazy-trees interaction.** Theory: `lib.sources.sourceByRegex`
+   and `cleanSourceWith` only import matching files into the store,
+   so the filter benefit composes with Nix's existing source-import
+   laziness. The interaction with Nix's experimental `lazy-trees`
+   feature (Git-input lazy materialization) is unverified. This RFC
+   does not assert behavior; verification is required before
+   `experimental → testing` promotion.
+
+2. **`mkGoEnv` parity for `goSourceFilter`.** The filter must apply
+   identically to `mkGoEnv` calls so devshell module-graph matches
+   build-time module-graph. Empirical verification is deferred until
+   `mkGoPkgs` lands and the first producer adopts the filter.
+
+3. **Store-path name preservation.** Documented behavior is "preserve
+   `src.name`". Whether downstream adopters would prefer
+   `${src.name}-go-source` is left to the first real adoption to
+   surface; the answer changes the default but not the protocol shape.
 
 ## References
 
-(filled in Task 8)
+### Companion FDRs
+
+- [FDR-0003 — Bridge Go module deps from flake inputs](../features/0003-bridge-go-flake-inputs.md).
+  Source of the consumer-side problem statement, POC findings (commit
+  `f99a3ff43278`, `zz-pocs/goflake-poc/`), and multi-producer-closures
+  shape. Thinned to journey-only when this RFC supersedes its
+  interface sections.
+
+- [FDR-0004 — go-pkgs producer convention + middleware](../features/0004-go-pkgs-producer-convention.md).
+  Source of the producer-side problem statement, the codegen-middleware
+  motivation, and the `mkGoPkgs` shape exploration. Thinned to
+  journey-only when this RFC supersedes its interface sections.
+
+### Proof-of-concept
+
+- POC commit `f99a3ff43278` — the three-phase probe of the
+  `require <module> v0.0.0-<sentinel> + replace => ./.flake-inputs/<name>`
+  shape at `zz-pocs/goflake-poc/`. Identified the concrete blocker
+  (`pwd + "/${value.path}"` eval-time path import) that the bridge
+  must avoid.
+
+### Originating issues
+
+- [nixpkgs#39 — `gomod.nix` convention for consumer-side goFlakeInputs](https://github.com/amarbel-llc/nixpkgs/issues/39)
+  surfaced the consumer convention from madder#211 adoption.
+- [nixpkgs#40 — filtered-source `go-pkgs` over bare `self`](https://github.com/amarbel-llc/nixpkgs/issues/40)
+  surfaced the `goSourceFilter` need.
+- [nixpkgs#41 — linter for missing `goFlakeInputs` threading](https://github.com/amarbel-llc/nixpkgs/issues/41)
+  follow-up enforcement gap referenced from § *Consumer convention*.
+
+### Tracking issues
+
+- [nixpkgs#32 — consumer-side `goFlakeInputs` implementation](https://github.com/amarbel-llc/nixpkgs/issues/32).
+- [nixpkgs#35 — `mkGoPkgs` helper and middleware contract](https://github.com/amarbel-llc/nixpkgs/issues/35).
+- [nixpkgs#36 — deeper-than-one transitive resolution (FOD-regen path)](https://github.com/amarbel-llc/nixpkgs/issues/36).
+
+### Downstream consumers
+
+Downstream Go projects expected to evaluate against this RFC:
+`dagnabit`, `madder`, `maneater`, `dodder`, `chrest`, `nebulous`, and
+`tommy`.
