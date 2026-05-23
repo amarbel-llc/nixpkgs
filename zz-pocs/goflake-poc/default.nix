@@ -25,16 +25,10 @@ buildGoModule {
   # and lets Go read go.mod directly and follow the replace.
   proxyVendor = true;
 
-  # Phase 2 keeps the symlink-bridge pattern. The consumer's go.mod no
-  # longer carries the require/replace lines (those moved to goFlakeInputs
-  # for phase 3), so re-inject them here for buildGoModule's organic flow.
+  # Phase 2 keeps the symlink-bridge pattern. The consumer's go.mod
+  # already carries the require/replace lines (organic flow); we only
+  # need to materialize the symlinked source the replace points at.
   preBuild = ''
-    cat >> go.mod <<'EOF'
-
-    require github.com/poc/lib v0.0.0-00010101000000-000000000000
-
-    replace github.com/poc/lib => ./.flake-inputs/poc-lib
-    EOF
     mkdir -p .flake-inputs
     ln -sfn ${pocLibSrc} .flake-inputs/poc-lib
   '';

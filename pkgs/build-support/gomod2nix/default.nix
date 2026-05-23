@@ -769,13 +769,15 @@ let
 
         # When goFlakeInputs is non-empty, swap the source's organic go.mod
         # for the merged one (with synthetic require/replace lines pointing
-        # at /nix/store paths). preBuild runs after goConfigHook's chdir, so
-        # we're already at the build's modRoot.
-        preBuild =
+        # at /nix/store paths). postPatch runs after unpack/patch and before
+        # configurePhase/goConfigHook, naturally expressing a source-tree
+        # modification and avoiding preBuild-concatenation surface for
+        # buildGoRace / buildGoCover wrappers.
+        postPatch =
           optionalString (mergedGoModFile != null) ''
             cp --no-preserve=mode ${mergedGoModFile} go.mod
           ''
-          + (attrs.preBuild or "");
+          + (attrs.postPatch or "");
 
         doCheck = attrs.doCheck or true;
 
