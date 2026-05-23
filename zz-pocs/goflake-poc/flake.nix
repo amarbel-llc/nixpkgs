@@ -40,6 +40,13 @@
         via-gomod2nix = pkgs.callPackage ./default-via-gomod2nix.nix {
           pocLibSrc = poc-lib;
         };
+        via-gomod2nix-race = pkgs.buildGoRace {
+          base = self.packages.${system}.via-gomod2nix;
+        };
+        via-gomod2nix-overridden = self.packages.${system}.via-gomod2nix.overrideAttrs (_: {
+          # No-op override; should not dislodge the merged-derivation closure.
+          NIX_DEBUG = "0";
+        });
         mkgoenv-test = pkgs.callPackage ./mkgoenv-test.nix {
           pocLibSrc = poc-lib;
         };
