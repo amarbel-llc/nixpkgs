@@ -40,6 +40,9 @@
         via-gomod2nix = pkgs.callPackage ./default-via-gomod2nix.nix {
           pocLibSrc = poc-lib;
         };
+        mkgoenv-test = pkgs.callPackage ./mkgoenv-test.nix {
+          pocLibSrc = poc-lib;
+        };
       };
     };
 }

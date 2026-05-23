@@ -81,10 +81,7 @@ let
 
   internals = import ./internals.nix { };
   inherit (internals)
-    normalizeFlakeInput
-    sentinelPseudoVersion
-    mkMergedGoMod
-    mergeGomod2nixTomls
+    mkMergedView
     ;
 
   # Internal only build-time attributes
@@ -440,14 +437,32 @@ let
       pwd,
       toolsGo ? pwd + "/tools.go",
       modules ? pwd + "/gomod2nix.toml",
+      goFlakeInputs ? { },
       allowGoReference ? false,
       ...
     }@attrs:
     let
-      goMod = parseGoMod (readFile "${toString pwd}/go.mod");
-      modulesStruct = fromTOML (readFile modules);
+      # Pick the Go toolchain off the consumer's organic go.mod (the
+      # synthetic require/replace lines from goFlakeInputs don't change
+      # the Go version requirement). This matches buildGoApplication's
+      # chicken-and-egg handling of selectGo vs. mkMergedGoMod.
+      consumerGoModForVersion = parseGoMod (readFile "${toString pwd}/go.mod");
+      go = selectGo attrs consumerGoModForVersion;
 
-      go = selectGo attrs goMod;
+      # Mirror buildGoApplication's merge: when goFlakeInputs is empty
+      # this returns the consumer's organic go.mod and gomod2nix.toml
+      # verbatim, preserving the pre-goFlakeInputs behaviour byte-for-byte.
+      merged = mkMergedView {
+        inherit
+          pwd
+          modules
+          goFlakeInputs
+          go
+          runCommand
+          parseGoMod
+          ;
+      };
+      inherit (merged) goMod modulesStruct mergedGoModFile;
 
       vendorEnv = mkVendorEnv {
         inherit
@@ -477,6 +492,7 @@ let
     stdenv.mkDerivation (
       removeAttrs attrs [
         "pwd"
+        "goFlakeInputs"
         "allowGoReference"
       ]
       // {
@@ -513,7 +529,9 @@ let
         ''
         + optionalString (pathExists toolsGo) ''
           mkdir source
-          cp ${pwd + "/go.mod"} source/go.mod
+          cp ${
+            if mergedGoModFile != null then mergedGoModFile else pwd + "/go.mod"
+          } source/go.mod
           cp ${pwd + "/go.sum"} source/go.sum
           cp ${toolsGo} source/tools.go
           cd source
@@ -522,6 +540,20 @@ let
 
           ${internal.install}
         '';
+
+        # Devshell parity with buildGoApplication: surface the merged
+        # go.mod so flake consumers can wire it into the user's working
+        # tree (e.g. via a shellHook that copies it on entry). The vendor
+        # tree already reflects the merged module graph above. mkGoEnv
+        # intentionally does NOT mutate the user's working directory.
+        passthru =
+          (attrs.passthru or { })
+          // {
+            inherit vendorEnv;
+          }
+          // optionalAttrs (mergedGoModFile != null) {
+            mergedGoMod = mergedGoModFile;
+          };
       }
     );
 
@@ -560,10 +592,6 @@ let
       consumerGoMod =
         if pwd != null && pathExists goModPath then parseGoMod (readFile goModPath) else null;
 
-      # Normalize and detect whether goFlakeInputs has any entries.
-      normalizedFlakeInputs = builtins.mapAttrs (_: normalizeFlakeInput) goFlakeInputs;
-      hasFlakeInputs = normalizedFlakeInputs != { };
-
       # For Go version selection, prefer consumer go.mod, fall back to go.work.
       # Synthetic require/replace lines from goFlakeInputs don't change the Go
       # version requirement, so we use the consumer's organic go.mod here.
@@ -580,49 +608,19 @@ let
 
       go = selectGo attrs goModForVersion;
 
-      # When goFlakeInputs is non-empty, build a merged go.mod via mkMergedGoMod;
-      # the result is a derivation that the next readFile triggers (IFD).
-      # When empty, fall through to using the consumer's organic go.mod.
-      # Pass `pwd + "/go.mod"` (a path) rather than the string `goModPath` so
-      # the derivation gets a proper store-path reference.
-      mergedGoModFile =
-        if hasFlakeInputs && consumerGoMod != null then
-          mkMergedGoMod {
-            consumerGoMod = pwd + "/go.mod";
-            inherit go goFlakeInputs runCommand;
-          }
-        else
-          null;
-
-      # Final goMod: parsed from the merged file if present, else the consumer's.
-      goMod =
-        if mergedGoModFile != null then
-          parseGoMod (readFile mergedGoModFile)
-        else
-          consumerGoMod;
-
-      # Parse the consumer's gomod2nix.toml, then union with each flake input's
-      # gomod2nix.toml if any. Consumer wins on overlap.
-      consumerModulesStruct = if modules == null then { } else fromTOML (readFile modules);
-
-      flakeInputTomls = builtins.attrValues (
-        builtins.mapAttrs (
-          _: v:
-          let
-            path = "${v.src}${if v.subPath == "" then "" else "/${v.subPath}"}/gomod2nix.toml";
-          in
-          if builtins.pathExists path then fromTOML (readFile path) else { mod = { }; }
-        ) normalizedFlakeInputs
-      );
-
-      modulesStruct =
-        if hasFlakeInputs then
-          mergeGomod2nixTomls {
-            consumer = consumerModulesStruct;
-            flakeInputs = flakeInputTomls;
-          }
-        else
-          consumerModulesStruct;
+      # Compute the merged view (consumer + goFlakeInputs). Returns the
+      # consumer's data verbatim when goFlakeInputs is empty.
+      merged = mkMergedView {
+        inherit
+          pwd
+          modules
+          goFlakeInputs
+          go
+          runCommand
+          parseGoMod
+          ;
+      };
+      inherit (merged) goMod modulesStruct mergedGoModFile;
 
       defaultPackage = modulesStruct.goPackagePath or "";
 

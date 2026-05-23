@@ -45,6 +45,29 @@ nix-build-via-gomod2nix: _stage-untracked
     nix build --print-build-logs .#via-gomod2nix
     ./result/bin/goflake-poc
 
+# Devshell parity (Task 6): mkGoEnv with goFlakeInputs must produce the
+# same merged go.mod and vendorEnv as buildGoApplication. Asserts the
+# store paths match — strongest possible parity, since equal store paths
+# imply bit-identical content.
+[group('explore')]
+mkgoenv-parity: _stage-untracked
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f flake.lock
+    build_gomod=$(nix build --no-link --print-out-paths .#via-gomod2nix.passthru.mergedGoMod)
+    env_gomod=$(nix build --no-link --print-out-paths .#mkgoenv-test.passthru.mergedGoMod)
+    if [[ "$build_gomod" != "$env_gomod" ]]; then
+      echo "PARITY MISMATCH (mergedGoMod): build=$build_gomod env=$env_gomod" >&2
+      exit 1
+    fi
+    build_vendor=$(nix build --no-link --print-out-paths .#via-gomod2nix.passthru.vendorEnv)
+    env_vendor=$(nix build --no-link --print-out-paths .#mkgoenv-test.passthru.vendorEnv)
+    if [[ "$build_vendor" != "$env_vendor" ]]; then
+      echo "PARITY MISMATCH (vendorEnv): build=$build_vendor env=$env_vendor" >&2
+      exit 1
+    fi
+    echo "PARITY OK: mergedGoMod=$build_gomod vendorEnv=$build_vendor"
+
 # Clean transient artifacts.
 [group('explore')]
 clean:

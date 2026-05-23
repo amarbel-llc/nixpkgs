@@ -79,6 +79,85 @@ let
       schema = consumer.schema or 3;
       mod = flakeInputMerged // (consumer.mod or { });
     };
+
+  # Build the merged view of a Go module graph: consumer's go.mod and
+  # gomod2nix.toml merged with each flake-input's same-named files.
+  # Returns the parsed pieces both callers (buildGoApplication, mkGoEnv)
+  # need.
+  #
+  # When goFlakeInputs is empty, returns the consumer's organic data
+  # verbatim (mergedGoModFile = null, hasFlakeInputs = false), so the
+  # call site behaves exactly as it did before goFlakeInputs existed.
+  #
+  # `parseGoMod` is supplied by the caller to avoid a circular import
+  # between this file and parser.nix.
+  mkMergedView =
+    {
+      pwd,
+      modules,
+      goFlakeInputs,
+      go,
+      runCommand,
+      parseGoMod,
+    }:
+    let
+      goModPath = "${toString pwd}/go.mod";
+      consumerGoMod =
+        if pwd != null && builtins.pathExists goModPath then
+          parseGoMod (builtins.readFile goModPath)
+        else
+          null;
+
+      normalizedFlakeInputs = builtins.mapAttrs (_: normalizeFlakeInput) goFlakeInputs;
+      hasFlakeInputs = normalizedFlakeInputs != { };
+
+      mergedGoModFile =
+        if hasFlakeInputs && consumerGoMod != null then
+          mkMergedGoMod {
+            consumerGoMod = pwd + "/go.mod";
+            inherit go goFlakeInputs runCommand;
+          }
+        else
+          null;
+
+      goMod =
+        if mergedGoModFile != null then
+          parseGoMod (builtins.readFile mergedGoModFile)
+        else
+          consumerGoMod;
+
+      consumerModulesStruct =
+        if modules == null then { } else builtins.fromTOML (builtins.readFile modules);
+
+      flakeInputTomls = builtins.attrValues (
+        builtins.mapAttrs (
+          _: v:
+          let
+            path = "${v.src}${if v.subPath == "" then "" else "/${v.subPath}"}/gomod2nix.toml";
+          in
+          if builtins.pathExists path then builtins.fromTOML (builtins.readFile path) else { mod = { }; }
+        ) normalizedFlakeInputs
+      );
+
+      modulesStruct =
+        if hasFlakeInputs then
+          mergeGomod2nixTomls {
+            consumer = consumerModulesStruct;
+            flakeInputs = flakeInputTomls;
+          }
+        else
+          consumerModulesStruct;
+    in
+    {
+      inherit
+        consumerGoMod
+        goMod
+        modulesStruct
+        mergedGoModFile
+        hasFlakeInputs
+        normalizedFlakeInputs
+        ;
+    };
 in
 {
   inherit
@@ -86,5 +165,6 @@ in
     normalizeFlakeInput
     mkMergedGoMod
     mergeGomod2nixTomls
+    mkMergedView
     ;
 }
