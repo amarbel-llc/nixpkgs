@@ -61,11 +61,30 @@ let
           cp ./go.mod $out
         ''
       );
+
+  # Union the consumer's gomod2nix.toml with each flake input's. On
+  # conflict (same Go module path in both), consumer wins.
+  mergeGomod2nixTomls =
+    { consumer, flakeInputs }:
+    let
+      # Build a single merged attrset across all flake-input mods.
+      # `//` is right-wins; in this fold, later flake inputs override
+      # earlier ones. (For now we assume flake-input collisions are
+      # rare — they'd indicate a deeper conflict the consumer should
+      # resolve manually.)
+      flakeInputMerged =
+        builtins.foldl' (acc: t: acc // (t.mod or { })) { } flakeInputs;
+    in
+    {
+      schema = consumer.schema or 3;
+      mod = flakeInputMerged // (consumer.mod or { });
+    };
 in
 {
   inherit
     sentinelPseudoVersion
     normalizeFlakeInput
     mkMergedGoMod
+    mergeGomod2nixTomls
     ;
 }
