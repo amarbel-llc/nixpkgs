@@ -313,7 +313,113 @@ does not provide automatic dependency resolution.
 
 ## Source filtering: `goSourceFilter`
 
-(filled in Task 5)
+### Rationale
+
+A producer that uses bare `self` as its `packages.${system}.go-pkgs`
+value cache-couples every downstream consumer's build closure to
+every file in the producer's repository — including README edits,
+scdoc man-page changes, justfile recipes, `.github/` workflow tweaks,
+and any other non-Go file. Each such edit changes the producer's
+store path, invalidates the consumer's vendor FOD, and forces a
+rebuild that has no semantic relationship to the change.
+
+A producer SHOULD scope its `go-pkgs` output to Go-relevant files.
+Producers that already maintain a `cleanSourceWith`-style filter (for
+their own builds) SHOULD reuse that filter for `go-pkgs`. Producers
+without a pre-existing filter MAY use `pkgs.goSourceFilter` for the
+common case.
+
+### `goSourceFilter` interface
+
+```nix
+goSourceFilter :: { src :: Path; extras ? [ String ]; } -> Source
+```
+
+Arguments:
+
+- `src` — REQUIRED. A path or derivation containing the Go source
+  tree.
+- `extras` — OPTIONAL. A list of POSIX extended-regex strings (default:
+  empty) that augment the default keep-set.
+
+`goSourceFilter` MUST be implemented in terms of
+`lib.sources.sourceByRegex`, the existing nixpkgs stdlib primitive in
+`lib/sources.nix`. The output MUST be a `cleanSourceWith`-filtered
+view of `src`.
+
+### Default keep-set
+
+`goSourceFilter` MUST keep, at minimum, the following files (matched
+against the source-tree-relative path of each file):
+
+- `.*\.go$` — any Go source file.
+- `^go\.mod$` — the module manifest.
+- `^go\.sum$` — the module checksum file.
+- `^gomod2nix\.toml$` — the `gomod2nix` lockfile.
+
+All other files MUST be dropped unless matched by an entry in
+`extras`.
+
+### `extras` semantics
+
+`extras` entries MUST be POSIX extended-regex strings, matched against
+the source-tree-relative path of each file (consistent with
+`builtins.match` and `lib.sources.sourceByRegex` semantics). They are
+NOT glob patterns; the nixpkgs stdlib does not ship glob matching, and
+`goSourceFilter` does not introduce a new syntax on top.
+
+Examples:
+
+```nix
+# Keep the doc/ subtree
+extras = [ "^doc/.*" ];
+
+# Keep a single root file
+extras = [ "^VERSION$" ];
+
+# Keep all *.tmpl files
+extras = [ ".*\\.tmpl$" ];
+
+# Combine
+extras = [ "^doc/.*" "^VERSION$" ".*\\.tmpl$" ];
+```
+
+### Store-path naming
+
+`goSourceFilter` MUST preserve `src.name`. The resulting store path is
+named identically to the input `src` (this is `cleanSourceWith`'s
+default behavior). Producers that want a more diagnostic name (e.g.
+`${src.name}-go-source`) MAY wrap the output:
+
+```nix
+lib.cleanSourceWith {
+  name = "${src.name}-go-source";
+  src = pkgs.goSourceFilter { inherit src; };
+}
+```
+
+### `goSourceFilterMiddleware`
+
+The fork's overlay SHOULD also expose `pkgs.goSourceFilterMiddleware`,
+a 1-line `src -> src` wrapper around `goSourceFilter`:
+
+```nix
+goSourceFilterMiddleware = src: goSourceFilter { inherit src; };
+```
+
+It exists so the filter composes naturally into the
+`mkGoPkgs.middlewares` pipeline without forcing producers to write the
+closure themselves:
+
+```nix
+packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+  src = self;
+  middlewares = [
+    pkgs.goSourceFilterMiddleware
+    # ... other middlewares ...
+  ];
+};
+```
 
 ## Consumer convention: `gomod.nix` colocation
 
