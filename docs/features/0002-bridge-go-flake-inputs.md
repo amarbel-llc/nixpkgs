@@ -1,0 +1,277 @@
+---
+status: exploring
+date: 2026-05-23
+promotion-criteria: |
+  exploring → proposed: at least one downstream Go project in this fork
+  (`dagnabit`, `madder`, `maneater`, `dodder`, `chrest`, `nebulous`)
+  commits to consuming a sibling Go module via the bridge — meaning a
+  real `go.mod` entry resolves through a `goFlakeInputs` flake-input
+  rather than through `go get` against the module proxy.
+
+  proposed → experimental: `goFlakeInputs` lands in
+  `pkgs/build-support/gomod2nix/default.nix` and the committed
+  consumer above builds successfully through `buildGoApplication`
+  + `mkGoEnv` end-to-end.
+
+  experimental → testing: the lockstep-bump regression class (flake
+  input rev + `go.mod` pseudo-version + `gomod2nix.toml` hash drifting
+  out of sync) is empirically gone — at least one cross-repo rename
+  has been observed to land in the consumer with only a `flake.lock`
+  bump, no manual `go.mod` edit.
+
+  testing → accepted: the bridge has carried at least two fork
+  consumers for a release cycle, and any escape-hatch usage (manual
+  `go.mod` edits to override the bridge) has been documented.
+---
+
+# Bridge Go module deps from flake inputs
+
+## Problem Statement
+
+Today, cross-repo Go composition in this fork is owned end-to-end by
+`go.mod` / `go.sum` / `replace` directives; Nix only packages the
+result Go has already resolved. Bumping a sibling Go module (e.g.
+`dodder` → `madder`) requires editing **three** places in lockstep:
+
+1. `go.mod`'s pseudo-version in the consumer's `require` line.
+2. `gomod2nix.toml`'s NAR hash for that module.
+3. `flake.lock`'s rev of the sibling-module input.
+
+When any of these three drifts, the build still succeeds (each layer
+is internally consistent) but the binary runs against the wrong
+version of the sibling. The motivating regression — madder's
+`dodder-blob_store-config` → `blob_store-config` rename — landed
+exactly this way: the flake input bumped, but `go.mod`'s pin lagged
+into a runtime panic. The drift class is silent at every gate.
+
+The deeper friction is **the codegen-at-Nix-build-time vision**: when a
+producer flake's output is itself a generated Go source tree (e.g.
+`dagnabit`'s graph export, `tommy`'s code generation), there is no
+Nix-native path to feed that output into a consumer's Go module
+without round-tripping through Go's module system. Today consumers
+re-run codegen as a `preBuild` shell fragment, or — worse — as a
+manual step outside Nix during dev loops. The result isn't cached, and
+the divergence surface grows.
+
+The bridge collapses the lockstep: only the flake input rev matters;
+the merged `go.mod`'s replace points at the new store path
+automatically, and `gomod2nix.toml` only tracks the *organic* surface.
+
+## Interface
+
+Extend `buildGoApplication` (and `mkGoEnv`) with a `goFlakeInputs`
+argument:
+
+```nix
+goFlakeInputs = {
+  "github.com/amarbel-llc/dodder" = inputs.dodder;
+  "github.com/amarbel-llc/dagnabit" = inputs.dagnabit;
+};
+```
+
+Each entry maps a Go module path to a flake-input derivation. At
+nix-eval time, the builder injects synthetic `replace` directives that
+point at the flake input's store path, in parallel to the organic
+`goMod.replace` entries that `mkVendorEnv` already processes.
+
+Critically, the synthetic entries **do not require the source filesystem
+to contain a placeholder directory** — that's the failure mode the POC
+surfaced (see *POC findings* below). Synthetic targets are derivation
+references, not `pwd + "/..."` paths.
+
+Resolved sub-decisions (carried over from the prior FDR-0001 § Path A):
+
+1. **Merge primitive: `go mod edit -replace`.** Synthetic deps overlay
+   onto the organic `go.mod`; only flake-input-driven entries are
+   synthetic. Most projects have a mix — `cobra`, `golang.org/x/...`,
+   etc. stay organic. The version pin in the organic `require` line
+   becomes vestigial: the replace path wins at build time.
+2. **Inline derivation arg, not a manifest file.** Caller passes
+   `goFlakeInputs` directly to the builder; no separate
+   `flake-go-inputs.toml`. Single source of truth for synthetic versions
+   = the flake input rev (via `flake.lock`).
+3. **Local `go build` outside nix is unsupported.** All Go work happens
+   inside `nix develop` or via `nix build`. The merged `go.mod` is the
+   only file the build sees; no dual-path concerns. `mkGoEnv` and
+   `buildGoApplication` apply the same merge logic; `go.work`
+   indirection becomes unnecessary.
+
+## Examples
+
+A downstream consumer that depends on a sibling Go module would
+migrate roughly as follows:
+
+```nix
+# Before — manual lockstep:
+{ pkgs, inputs, ... }:
+let
+  madder = pkgs.buildGoApplication {
+    pname = "madder";
+    src = ./.;
+    pwd = ./.;
+    subPackages = [ "cmd/madder" ];
+    modules = ./gomod2nix.toml;
+    # `go.mod` has a `require github.com/amarbel-llc/dodder v0.0.0-...`
+    # pseudo-version that has to be hand-synced with inputs.dodder's rev,
+    # and a `gomod2nix.toml` entry with a hand-synced NAR hash.
+  };
+in {
+  packages.default = madder;
+}
+
+# After — bridge:
+{ pkgs, inputs, ... }:
+let
+  madder = pkgs.buildGoApplication {
+    pname = "madder";
+    src = ./.;
+    pwd = ./.;
+    subPackages = [ "cmd/madder" ];
+    modules = ./gomod2nix.toml;
+    goFlakeInputs = {
+      "github.com/amarbel-llc/dodder" = inputs.dodder;
+    };
+  };
+in {
+  packages.default = madder;
+}
+```
+
+The consumer's `gomod2nix.toml` loses the `dodder` entry entirely.
+`go.mod` still carries the `require` line (Go's parser needs *some*
+version) with a sentinel pseudo-version. Bumping dodder is now a
+`nix flake update --input dodder` away.
+
+## POC findings (commit f99a3ff43278, `zz-pocs/goflake-poc/`)
+
+A three-phase probe of the bridge pattern's foundation:
+`require <module> v0.0.0-<sentinel-pseudo>` +
+`replace => ./.flake-inputs/<name>`, with the nix builder symlinking
+the flake input's source into `.flake-inputs/<name>` at build time.
+
+1. **Bare `go build`: PASS.** The minimum syntactically-valid sentinel
+   pseudo-version `v0.0.0-00010101000000-000000000000` is accepted by
+   `module.CanonicalVersion` (and thus `modfile.Parse` with a nil
+   fixer); the symlinked local-path replace resolves cleanly; no
+   `go.sum` entry is required for the replaced module.
+
+2. **`buildGoModule`: PASS** with two non-default knobs:
+   `vendorHash = null` + `proxyVendor = true` (suppresses
+   buildGoModule's auto-`-mod=vendor`; see
+   `nixpkgs/pkgs/build-support/go/module.nix` line ~232) and
+   `subPackages = ["."]` (prevents subpackage discovery from walking
+   into the symlinked replace target, which is a separate Go module).
+   `preBuild` symlinks the flake input's store path into
+   `.flake-inputs/<name>` at build time.
+
+3. **`buildGoApplication`: FAIL.** This is the concrete blocker
+   `goFlakeInputs` must address. The existing `localReplaceCommands`
+   block (`pkgs/build-support/gomod2nix/default.nix:198-205`):
+
+   ```nix
+   mkdir -p $(dirname vendor/${name})
+   ln -s ${pwd + "/${value.path}"} vendor/${name}
+   ```
+
+   evaluates `pwd + "/${value.path}"` as a Nix path at eval time and
+   imports it into the store. For our pattern, `value.path =
+   "./.flake-inputs/<name>"`, gitignored and only created at build
+   time. Result:
+
+   ```
+   error: Path '…/.flake-inputs/<name>' in the repository … is not
+   tracked by Git.
+   ```
+
+   No `proxyVendor`-equivalent escape hatch exists on
+   `buildGoApplication`.
+
+### Implications for the implementation
+
+Any implementation must avoid the eval-time path import for synthetic,
+flake-input-driven replaces. Two natural shapes:
+
+- **Eval-time substitution** (preferred). Accept `goFlakeInputs` as
+  `{ "<go-module-path>" = <flake-input-derivation>; }`. Inject those
+  entries into `mkVendorEnv` *parallel to* `goMod.replace`, but with
+  the symlink target taken directly from the flake-input derivation
+  rather than reconstructed via `pwd + "/${value.path}"`. The synthetic
+  entries never need to exist on the source filesystem.
+- **Build-time deferral.** Move the local-replace symlinking out of the
+  vendor-FOD and into a `postUnpack`/`preBuild` phase of the main
+  derivation, mirroring `buildGoModule`'s approach. More invasive but
+  decouples the timing entirely.
+
+The eval-time substitution shape is the smaller change and matches the
+"intermediate Nix-eval-time derivation runs `go mod edit -replace=...`"
+framing. The POC pinpoints the exact lines that need to change.
+
+Tracking issue: [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/issues/32).
+
+## Limitations
+
+- **Caller manages the `require` line in `go.mod`.** First-cut scope
+  has the caller keep `require <module> v0.0.0-<sentinel>` in `go.mod`
+  manually, parallel to declaring `goFlakeInputs`. Auto-injecting the
+  `require` via `go mod edit -require` at eval time is a follow-up
+  ergonomics fix; the bridge mechanic itself doesn't depend on it.
+
+- **Transitive deps of the flake input.** If a flake input has its own
+  Go dependencies, who tracks them? Options under discussion: (a)
+  caller adds them to their own `gomod2nix.toml`; (b) builder runs
+  `gomod2nix generate` against the merged tree inside a FOD; (c) the
+  flake input ships its own `gomod2nix.toml` and the builder unions
+  them. The POC sidestepped this (zero-dep library); real consumers
+  will not. Resolution required before promotion to `experimental`.
+
+- **Source-only inputs assumed.** `goFlakeInputs` entries are expected
+  to be derivations whose output is a Go module source tree (own
+  `go.mod`, importable packages). Pre-built binaries or non-Go outputs
+  are out of scope.
+
+- **No `go build` outside Nix.** Inherited from sub-decision 3 above —
+  this fork's Go projects already require `nix develop` for the
+  toolchain; the bridge keeps that constraint. Editor / language-server
+  workflows that parse `go.mod` directly may need the merged form
+  materialized into the workspace; the materialization step is a
+  follow-up.
+
+- **`mkGoEnv` parity.** The bridge must be present in *both*
+  `buildGoApplication` and `mkGoEnv` for devshells to see the same
+  module graph as `nix build`. Implementing only the build-side leaves
+  `nix develop` with a different view, which would silently reintroduce
+  the lockstep-drift class through the back door.
+
+- **No interaction yet defined with `buildGoRace` / `buildGoCover`.**
+  These wrappers `overrideAttrs` on a `buildGoApplication`-produced
+  derivation. They *should* be unaffected by `goFlakeInputs` (the merge
+  happens before they wrap), but this needs concrete verification.
+
+## More Information
+
+- POC: `zz-pocs/goflake-poc/` in this repo. Commit f99a3ff43278.
+- Tracking issue:
+  [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/issues/32).
+- Originating exploration:
+  [amarbel-llc/nixpkgs#12](https://github.com/amarbel-llc/nixpkgs/issues/12)
+  ("flake input as canonical Go module source"). Its strategic framing
+  and resolved sub-decisions were absorbed here; the issue stays open
+  as a tracking surface for the next trigger event.
+- Sibling FDR: `docs/features/0001-numtide-go2nix-overlay-builder.md`
+  originally carried this material as its *Path A — Bridge*
+  subsection. The bridge was extracted here when the per-package
+  caching ambition (Path B) and the bridge developed distinct
+  promotion tracks. If `numtide/go2nix` adoption becomes the durable
+  Go-build foundation in this fork (and per-package caching subsumes
+  the lockstep problem), this FDR may become superseded by 0001's
+  successor; until then, the bridge is the primary route.
+- Adjacent infra issues surfaced during the originating investigation:
+  [amarbel-llc/dodder#125](https://github.com/amarbel-llc/dodder/issues/125),
+  [amarbel-llc/dodder#126](https://github.com/amarbel-llc/dodder/issues/126),
+  [amarbel-llc/clown#39](https://github.com/amarbel-llc/clown/issues/39).
+- Codegen tools relevant to the Nix-as-codegen-layer ambition:
+  `amarbel-llc/dagnabit`, `amarbel-llc/tommy`. A future FDR may
+  capture the codegen-as-Nix-derivation pattern independently of the
+  choice of Go builder.
+- Downstream consumers expected to evaluate against this FDR:
+  `dagnabit`, `madder`, `maneater`, `dodder`, `chrest`, `nebulous`.
