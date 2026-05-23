@@ -286,7 +286,7 @@ the *tap* flake:
 ## See also
 
 For design rationale and the alternatives considered, see
-*docs/features/0002-bridge-go-flake-inputs.md*.
+*docs/features/0003-bridge-go-flake-inputs.md*.
 
 # VERSION AND COMMIT INJECTION
 

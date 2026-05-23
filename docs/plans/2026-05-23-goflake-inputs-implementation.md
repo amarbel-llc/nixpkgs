@@ -27,7 +27,7 @@ suppressing). No migration commits to undo.
 
 **Background to read first:**
 - Design: `docs/plans/2026-05-23-goflake-inputs-design.md`
-- FDR: `docs/features/0002-bridge-go-flake-inputs.md`
+- FDR: `docs/features/0003-bridge-go-flake-inputs.md`
 - POC: `zz-pocs/goflake-poc/README.md` + commit f99a3ff43278
 - Tracking issue: [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/issues/32)
 - Existing builder: `pkgs/build-support/gomod2nix/default.nix`
@@ -580,7 +580,7 @@ Refs amarbel-llc/nixpkgs#32."
 **Files:**
 - Modify: `pkgs/build-support/gomod2nix/default.nix` (`mkGoEnv` function)
 
-**Background:** Per FDR-0002's mandatory parities, mkGoEnv must accept
+**Background:** Per FDR-0003's mandatory parities, mkGoEnv must accept
 and process `goFlakeInputs`. Otherwise `nix develop` sees a different
 module graph and re-introduces lockstep drift through the back door.
 
@@ -774,7 +774,7 @@ Right after the `# GO VERSION SELECTION` section. Cover:
 - Effect on `go.mod` (synthetic require + replace)
 - Effect on `gomod2nix.toml` (union with consumer; consumer wins)
 - Limitations (source-only, no auto-removal of organic requires)
-- Cross-link to FDR-0002
+- Cross-link to FDR-0003
 
 Use the same example shape as the FDR (madder → tap with subPath).
 
@@ -796,7 +796,7 @@ git commit -m "gomod2nix(7): document goFlakeInputs argument
 
 Adds GOFLAKEINPUTS section covering value shape, effects on
 go.mod / gomod2nix.toml, and limitations. Cross-links to
-docs/features/0002-bridge-go-flake-inputs.md."
+docs/features/0003-bridge-go-flake-inputs.md."
 ```
 
 ---

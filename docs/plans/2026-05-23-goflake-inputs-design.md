@@ -2,14 +2,14 @@
 
 **Date:** 2026-05-23
 **Tracks:** [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/issues/32)
-**FDR:** `docs/features/0002-bridge-go-flake-inputs.md`
+**FDR:** `docs/features/0003-bridge-go-flake-inputs.md`
 **POC:** `zz-pocs/goflake-poc/` (commit f99a3ff43278)
 
 ## Scope
 
 This doc covers *how* to implement `goFlakeInputs` in
 `pkgs/build-support/gomod2nix/default.nix`. The rationale and user-facing
-interface live in FDR-0002. The decisions captured here resolve the
+interface live in FDR-0003. The decisions captured here resolve the
 five scoping questions from the POC walkthrough.
 
 ## Resolved design decisions
@@ -46,7 +46,7 @@ buildGoApplication {
 ```
 
 The same `goFlakeInputs` arg is accepted by `mkGoEnv` (devshell parity is
-mandatory — see FDR-0002 §Limitations).
+mandatory — see FDR-0003 §Limitations).
 
 ## Mechanism: eval-time substitution
 

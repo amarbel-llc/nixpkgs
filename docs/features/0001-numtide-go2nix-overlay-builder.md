@@ -182,13 +182,13 @@ Two strategies are in play, at different points on the ambition axis.
 ### Path A — Bridge: synthesize `go.mod` replace directives from flake inputs
 
 **Extracted to its own FDR.** See
-[`0002-bridge-go-flake-inputs.md`](./0002-bridge-go-flake-inputs.md).
+[`0003-bridge-go-flake-inputs.md`](./0003-bridge-go-flake-inputs.md).
 The bridge has its own promotion track and POC validation
 (`zz-pocs/goflake-poc/`, commit f99a3ff43278) and is no longer
 gated on the broader numtide go2nix exploration in this document. If
 per-package caching (path B) becomes the durable Go-build foundation
 in this fork and subsumes the lockstep problem the bridge solves,
-FDR-0002 may become superseded by this document's successor. Until
+FDR-0003 may become superseded by this document's successor. Until
 then, the two paths progress independently.
 
 ### Path B — Native: `resolveGoPackages` across flake inputs
