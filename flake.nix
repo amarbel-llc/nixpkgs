@@ -42,6 +42,7 @@
           inherit (pkgs)
             claude-code
             gomod2nix
+            gomod2nix-man
             ;
           nix-man = pkgs.nix.man;
           default = pkgs.claude-code;
@@ -56,6 +57,7 @@
         {
           claude-code = pkgs.claude-code;
           gomod2nix = pkgs.gomod2nix;
+          gomod2nix-man = pkgs.gomod2nix-man;
           nix-man = pkgs.nix.man;
         }
       );

@@ -331,14 +331,14 @@ field falls back to *"unknown"*, which is the intended behaviour.
 Declare the variables at package scope in *package main* so the linker can
 set them via the *-X* flag:
 
-```go
+```
 var version = "dev"
 var commit  = "unknown"
 ```
 
 Then surface them in a *version* subcommand:
 
-```go
+```
 case "version":
     fmt.Printf("myapp %s (%s)\n", version, commit)
 ```
