@@ -423,7 +423,95 @@ packages.${system}.go-pkgs = pkgs.mkGoPkgs {
 
 ## Consumer convention: `gomod.nix` colocation
 
-(filled in Task 6)
+### Recommended shape
+
+When a consumer bridges two or more Go module deps through
+`goFlakeInputs`, the attrset SHOULD be lifted into a sibling file
+named `gomod.nix` (or, for polyglot repos that keep their Go module
+under a subdirectory, `go/gomod.nix`). Single-dep bridges MAY remain
+inline in the `buildGoApplication` call; the colocation convention
+exists to reduce duplication and surface drift, both of which only
+matter at multi-dep scale.
+
+`gomod.nix` MUST be a function from flake inputs (plus `system`) to an
+attrset that matches the `goFlakeInputs` schema defined in §
+*Consumer interface: `goFlakeInputs`*. The file MUST NOT depend on
+state outside its arguments; it MUST be importable from any
+`buildGoApplication` or `mkGoEnv` call in the same flake.
+
+### Example
+
+```nix
+# go/gomod.nix
+{ tap, tommy, system }: {
+  "github.com/amarbel-llc/tap/go" = {
+    src = tap;
+    subPath = "go";
+  };
+  "github.com/amarbel-llc/tommy" = {
+    src = tommy.packages.${system}.go-pkgs;
+  };
+}
+```
+
+Call sites then thread the imported attrset through every Go builder
+call:
+
+```nix
+# flake.nix
+let
+  goFlakeInputs = import ./go/gomod.nix {
+    inherit (inputs) tap tommy;
+    inherit system;
+  };
+in {
+  packages.${system}.default = pkgs.buildGoApplication {
+    pname = "madder";
+    src = ./.;
+    pwd = ./.;
+    modules = ./gomod2nix.toml;
+    inherit goFlakeInputs;
+  };
+
+  devShells.${system}.default = pkgs.mkShell {
+    inputsFrom = [
+      (pkgs.mkGoEnv {
+        pwd = ./.;
+        inherit goFlakeInputs;
+      })
+    ];
+  };
+}
+```
+
+### Threading
+
+Every `buildGoApplication` and `mkGoEnv` call that consumes the
+consumer's `gomod2nix.toml` MUST receive the same `goFlakeInputs`
+value. The recommended idiom is `inherit goFlakeInputs;` at each call
+site, with the single `goFlakeInputs` binding shared from the
+top-level `let`. Missing call sites silently resurrect lockstep drift:
+the build sees one set of replace targets, the devshell sees another.
+See issue
+[amarbel-llc/nixpkgs#41](https://github.com/amarbel-llc/nixpkgs/issues/41)
+for proposed lint coverage of this failure mode.
+
+### Why this convention exists
+
+Three reasons motivate the colocation pattern:
+
+1. **Discoverability.** `cat go/gomod.nix` answers "which sibling Go
+   modules does this consumer bridge?" without scanning the flake
+   outputs.
+2. **Drift surface.** With every `buildGoApplication` and `mkGoEnv`
+   call importing the same `gomod.nix`, divergence between call sites
+   becomes a single `grep` target: any call lacking
+   `inherit goFlakeInputs;` is the bug.
+3. **Symmetry with the producer side.** Producers publish one
+   `packages.${system}.go-pkgs` attribute; consumers publish one
+   `gomod.nix` file. The protocol's two halves each have a single
+   conventional location, which makes adoption mechanical: producers
+   know where to point inputs, consumers know where to declare them.
 
 ## Multi-producer closures: `follows` + passthru inheritance
 
