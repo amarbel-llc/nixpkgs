@@ -255,6 +255,12 @@ Tracking issue: [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/
 
 ## More Information
 
+- Producer-side counterpart:
+  [`0004-go-pkgs-producer-convention.md`](./0004-go-pkgs-producer-convention.md).
+  Defines the `packages.${system}.go-pkgs` flake-output convention and
+  `mkGoPkgs` middleware helper that supply the source trees this FDR's
+  `goFlakeInputs` consumes. The two FDRs form the end-to-end
+  cross-flake Go composition story.
 - POC: `zz-pocs/goflake-poc/` in this repo. Commit f99a3ff43278.
 - Tracking issue:
   [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/issues/32).

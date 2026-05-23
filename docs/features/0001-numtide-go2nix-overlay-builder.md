@@ -44,20 +44,35 @@ sharing a heavy dependency graph, the unit of cache reuse moves from
 
 A second motivation, beyond cache reuse, is to push **codegen into the
 Nix layer**. Several of the fork's Go projects depend on codegen tools
-that today are invoked either as a `preBuild` shell fragment in the
-consumer's Nix derivation (e.g. `madder/go/default.nix` runs
-`dagnabit export` in `preBuild`) or — more painfully — as a manual step
-developers re-run during dev loops outside Nix (`go run` against
-already-generated sources). With per-package Nix derivations, the
-codegen step would become its own first-class derivation node:
-`dagnabit`-built binaries would do their graph export at Nix build
-time once per input change, the result would be cached by Nix, and
-**both** `nix build` and bare-`go run` dev loops would consume the same
-cached artifact instead of re-generating per dev iteration. The
-ambition generalizes — `amarbel-llc/tommy` and other codegen
-pipelines should follow the same shape, with Nix becoming the
-canonical codegen layer rather than an opaque pre-build hook each
-consumer rewires by hand.
+that today are invoked at dev time and have their output checked into
+git — `amarbel-llc/purse-first:cmd/dagnabit/`'s `export` subcommand
+generates facade source trees under `go/pkgs/<facade>/`, regenerated
+by hand via a `just generate-facades` recipe in each consuming repo.
+The intent is to move this work into the Nix build path so the
+generated trees are derivation outputs, not committed artifacts.
+
+The **producer-side mechanism** for that move is captured by
+[FDR-0004 (`go-pkgs producer convention + middleware`)](./0004-go-pkgs-producer-convention.md):
+producer flakes expose `packages.${system}.go-pkgs` as a derivation
+whose output is the (possibly codegen-passed) Go source tree, with
+dagnabit as one example middleware. The **consumer-side mechanism** is
+already implemented by [FDR-0003 (`bridge-go-flake-inputs`)](./0003-bridge-go-flake-inputs.md):
+`buildGoApplication`'s `goFlakeInputs` arg ingests producer flake
+outputs as Go module sources. Together they deliver the
+codegen-as-derivation flow described in this section's first
+paragraph.
+
+What FDR-0003 and FDR-0004 do **not** address is *per-package cache
+reuse* across the bridge. When a producer's `go-pkgs` output rotates
+(any source change in the producer's tree, including a single facade),
+the consumer's vendor symlink points at a new store path and Go's
+stock toolchain rebuilds at module-path-version granularity — not
+package granularity. That's where numtide go2nix's package-graph
+caching becomes load-bearing. The codegen ambition still motivates
+this FDR; what's changed is that the cross-flake delivery half is
+solved, and per-package caching is now the only remaining open piece.
+The ambition generalizes — `amarbel-llc/tommy` and other codegen
+pipelines should follow the same shape once one consumer commits.
 
 This FDR exists so downstream repos in the fork can point to a single
 write-up when deciding whether to migrate or wait. **Status is
@@ -280,8 +295,11 @@ flake.
   `dagnabit`, `madder`, `maneater`, `dodder`, `chrest`, `nebulous`. Each
   should track its own decision in a downstream FDR pointing here.
 - Codegen tools relevant to the Nix-as-codegen-layer ambition:
-  `amarbel-llc/dagnabit` (graph export, currently invoked as a
-  `preBuild` shell fragment in `madder/go/default.nix`),
-  `amarbel-llc/tommy` (a generalization target — same shape applies).
-  A future FDR may capture the codegen-as-Nix-derivation pattern
-  independently of the choice of Go builder.
+  `amarbel-llc/purse-first:cmd/dagnabit/` (facade export; currently
+  invoked at dev time via each consumer's `just generate-facades`
+  recipe, output checked into git), `amarbel-llc/tommy` (a
+  generalization target — same shape applies). The
+  codegen-as-Nix-derivation pattern is captured in
+  [FDR-0004 (`go-pkgs producer convention`)](./0004-go-pkgs-producer-convention.md);
+  this FDR retains the per-package caching motivation, which FDR-0004
+  alone does not address.
