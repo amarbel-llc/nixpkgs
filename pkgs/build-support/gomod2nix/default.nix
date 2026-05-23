@@ -204,7 +204,12 @@ let
           commands = (
             mapAttrsToList (name: value: (''
               mkdir -p $(dirname vendor/${name})
-              ln -s ${pwd + "/${value.path}"} vendor/${name}
+              ln -s ${
+                if lib.hasPrefix "/" value.path then
+                  value.path # absolute /nix/store path (from goFlakeInputs)
+                else
+                  toString (pwd + "/${value.path}") # organic relative path; legacy behavior
+              } vendor/${name}
             '')) localReplaceAttrs
           );
         in
