@@ -164,6 +164,130 @@ devShells.default = pkgs-master.mkShell {
 };
 ```
 
+# GOFLAKEINPUTS
+
+*buildGoApplication* and *mkGoEnv* accept an optional *goFlakeInputs* attribute
+that bridges sibling flake-input Go modules into the consumer's module graph
+without publishing them or rewriting *go.mod* by hand. This is the supported
+way to consume a Go library that lives in a flake input — including polyglot
+repos where the Go module is in a subdirectory.
+
+## Value shape
+
+The shorthand form maps a Go module path to a derivation (typically a flake
+input's *self*):
+
+```
+goFlakeInputs = {
+  "code.linenoise.icu/zit/go" = inputs.tap;
+};
+```
+
+For polyglot repos where the Go module is rooted in a subdirectory of the
+flake, use the *{ src, subPath }* form:
+
+```
+goFlakeInputs = {
+  "code.linenoise.icu/zit/go" = {
+    src = inputs.tap;
+    subPath = "go";
+  };
+};
+```
+
+## Effect on go.mod
+
+At eval time, *buildGoApplication* and *mkGoEnv* invoke *go mod edit* to
+inject a synthetic *require* and *replace* line per entry. The *replace*
+points at the absolute */nix/store* path of the flake input (plus *subPath*
+when set). The injected pseudo-version is the zero sentinel
+*v0.0.0-00010101000000-000000000000*; the *require* line is unconditional and
+will appear even if *go.mod* already declares an organic *require* for the
+same module path. *go.mod* on disk is not modified — the edit happens on a
+copy used for the build.
+
+## Effect on gomod2nix.toml
+
+If the flake input ships its own *gomod2nix.toml*, it is unioned with the
+consumer's *gomod2nix.toml*. On a module-path conflict the consumer wins;
+this lets a consumer pin a transitive dependency without coordinating with
+the upstream input. Transitive deps that the input pulls in but the consumer
+does not yet track must be added to the consumer's *gomod2nix.toml* (regen
+via *go-sync-wrap*) until full FOD-regen lands as a follow-up — see
+*LIMITATIONS* below.
+
+## mkGoEnv parity
+
+*mkGoEnv* accepts the same *goFlakeInputs* attribute and applies the same
+synthesis. Devshells see the same merged module graph as *nix build*, so
+*go build ./...*, *gopls*, and editor tooling resolve cross-flake imports
+identically to the production build.
+
+## passthru.mergedGoMod
+
+*mkGoEnv* exposes the synthesized *go.mod* as *passthru.mergedGoMod* —
+a derivation containing the *go.mod* and *go.sum* with the *replace* lines
+injected. Consumers who want the merged file materialized into their working
+tree (so editors and *gopls* read it directly) can wire it into a *shellHook*:
+
+```
+let goEnv = pkgs.mkGoEnv { pwd = ./.; inherit goFlakeInputs; };
+in pkgs-master.mkShell {
+  packages = [ goEnv ];
+  shellHook = ''
+    cp -f ${goEnv.passthru.mergedGoMod}/go.mod ./go.mod
+    chmod u+w ./go.mod
+  '';
+}
+```
+
+## Example
+
+*madder* consumes *tap*, whose Go module lives in the *go/* subdirectory of
+the *tap* flake:
+
+```
+{
+  inputs.tap.url = "github:amarbel-llc/tap";
+
+  outputs = { self, nixpkgs, tap, ... }:
+    let pkgs = import nixpkgs { inherit system; };
+        goFlakeInputs = {
+          "code.linenoise.icu/zit/go" = { src = tap; subPath = "go"; };
+        };
+    in {
+      packages.default = pkgs.buildGoApplication {
+        pwd = ./.;
+        src = self;
+        inherit goFlakeInputs;
+      };
+
+      devShells.default = pkgs-master.mkShell {
+        packages = [ (pkgs.mkGoEnv { pwd = ./.; inherit goFlakeInputs; }) ];
+      };
+    };
+}
+```
+
+## Limitations
+
+- *goFlakeInputs* values must be source derivations (a flake's *self*, a
+  path, or a fetched src). Pre-built Go binary derivations are not supported
+  — only sources are consumed.
+- The synthetic *require* line is unconditional. An organic *require* in
+  *go.mod* for the same module path is not auto-removed; both lines coexist
+  and *go.mod* should be kept tidy manually (or the organic *require*
+  removed once the flake input is wired in).
+- Transitive deps of the flake input that are not in the consumer's
+  *gomod2nix.toml* must be added there (regen via *go-sync-wrap* in the
+  devshell). Full FOD-driven regeneration of the merged *gomod2nix.toml* is
+  tracked as a follow-up.
+
+## See also
+
+For design rationale and the alternatives considered, see
+*docs/features/0002-bridge-go-flake-inputs.md*.
+
 # VERSION AND COMMIT INJECTION
 
 *buildGoApplication* automatically injects the following ldflags into every
