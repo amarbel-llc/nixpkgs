@@ -30,6 +30,8 @@ final: prev: {
     mkGoEnv
     mkVendorEnv
     mkGoCacheEnv
+    goSourceFilter
+    goSourceFilterMiddleware
     ;
 
   gomod2nix = final.callPackage ../pkgs/build-support/gomod2nix/cli {

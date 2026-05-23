@@ -84,6 +84,9 @@ let
     mkMergedView
     ;
 
+  sourceFilter = import ./source-filter.nix { inherit lib; };
+  inherit (sourceFilter) goSourceFilter goSourceFilterMiddleware;
+
   # Internal only build-time attributes
   internal =
     let
@@ -926,6 +929,8 @@ in
     mkGoEnv
     mkVendorEnv
     mkGoCacheEnv
+    goSourceFilter
+    goSourceFilterMiddleware
     hooks
     ;
 }
