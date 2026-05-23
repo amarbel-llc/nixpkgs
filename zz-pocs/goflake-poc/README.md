@@ -81,35 +81,32 @@ With both, the binary builds and prints `FLAKE_INPUT_OK_v1`. The
 preBuild-driven symlink `ln -sfn ${pocLibSrc} .flake-inputs/poc-lib`
 fully works.
 
-### Phase 3: FAIL — structural mismatch with `buildGoApplication`
+### Phase 3: PASS via `goFlakeInputs`
 
-The fork's `buildGoApplication` (in
-`pkgs/build-support/gomod2nix/default.nix`) already handles local-path
-replaces by symlinking them into `vendor/<module>` (lines 198-205):
+`buildGoApplication` now accepts a `goFlakeInputs` arg: a map from Go
+module path to flake-input source. When non-empty, the builder:
+
+1. Synthesizes a merged `go.mod` (via `mkMergedGoMod`) with sentinel
+   pseudo-version `require` + absolute `/nix/store` `replace` lines.
+2. Unions the consumer's `gomod2nix.toml` with each flake input's via
+   `mergeGomod2nixTomls`.
+3. Symlinks the absolute path directly into `vendor/<module>` from
+   `localReplaceCommands` (no `pwd + "/${value.path}"` re-rooting).
+4. Swaps the source's organic `go.mod` for the merged one via a
+   `preBuild` prelude, so the in-sandbox build sees the synthetic
+   directives.
+
+The consumer's `go.mod` no longer carries the `require`/`replace` lines
+— they're injected. See `default-via-gomod2nix.nix`:
 
 ```nix
-mkdir -p $(dirname vendor/${name})
-ln -s ${pwd + "/${value.path}"} vendor/${name}
+buildGoApplication {
+  # ...
+  goFlakeInputs = {
+    "github.com/poc/lib" = pocLibSrc;
+  };
+}
 ```
-
-The expression `pwd + "/${value.path}"` is evaluated at **nix-eval
-time**: it constructs a nix path that must exist in the source tree
-because nix attempts to import it into the store. For our pattern,
-`value.path = "./.flake-inputs/poc-lib"`, which is gitignored and
-created at *build time* by `preBuild`. Result:
-
-```
-error: Path 'zz-pocs/goflake-poc/.flake-inputs/poc-lib' in the
-repository "…" is not tracked by Git.
-```
-
-There is no `proxyVendor`-equivalent escape hatch on `buildGoApplication`
-and no way to defer the symlink to a build phase. To support the bridge
-pattern, `buildGoApplication` would need a new arg that accepts flake
-input store paths directly instead of relying on relative paths — this is
-exactly the `goFlakeInputs` proposal in
-`docs/features/0001-numtide-go2nix-overlay-builder.md` (Bridge to Flake
-Inputs section).
 
 ## What this proves
 

@@ -80,7 +80,12 @@ let
   inherit (import ./parser.nix) parseGoMod parseGoWork;
 
   internals = import ./internals.nix { };
-  inherit (internals) normalizeFlakeInput sentinelPseudoVersion mkMergedGoMod;
+  inherit (internals)
+    normalizeFlakeInput
+    sentinelPseudoVersion
+    mkMergedGoMod
+    mergeGomod2nixTomls
+    ;
 
   # Internal only build-time attributes
   internal =
@@ -525,6 +530,7 @@ let
       modules ? pwd + "/gomod2nix.toml",
       src ? pwd,
       pwd ? null,
+      goFlakeInputs ? { },
       nativeBuildInputs ? [ ],
       allowGoReference ? false,
       meta ? { },
@@ -543,21 +549,27 @@ let
       ...
     }@attrs:
     let
-      modulesStruct = if modules == null then { } else fromTOML (readFile modules);
-
       # Detect workspace: check for go.work at pwd
       goWorkPath = "${toString pwd}/go.work";
       hasWorkspace = pwd != null && pathExists goWorkPath;
       goWork = if hasWorkspace then parseGoWork (readFile goWorkPath) else null;
 
-      # For workspaces, go.mod may not exist at pwd; use go.work's Go version
+      # Parse the consumer's organic go.mod (no goFlakeInputs synthesis yet).
+      # We need this first to select Go (chicken-and-egg: mkMergedGoMod needs go).
       goModPath = "${toString pwd}/go.mod";
-      goMod = if pwd != null && pathExists goModPath then parseGoMod (readFile goModPath) else null;
+      consumerGoMod =
+        if pwd != null && pathExists goModPath then parseGoMod (readFile goModPath) else null;
 
-      # For Go version selection, prefer go.mod, fall back to go.work
+      # Normalize and detect whether goFlakeInputs has any entries.
+      normalizedFlakeInputs = builtins.mapAttrs (_: normalizeFlakeInput) goFlakeInputs;
+      hasFlakeInputs = normalizedFlakeInputs != { };
+
+      # For Go version selection, prefer consumer go.mod, fall back to go.work.
+      # Synthetic require/replace lines from goFlakeInputs don't change the Go
+      # version requirement, so we use the consumer's organic go.mod here.
       goModForVersion =
-        if goMod != null then
-          goMod
+        if consumerGoMod != null then
+          consumerGoMod
         else if goWork != null then
           {
             go = goWork.go;
@@ -567,6 +579,50 @@ let
           null;
 
       go = selectGo attrs goModForVersion;
+
+      # When goFlakeInputs is non-empty, build a merged go.mod via mkMergedGoMod;
+      # the result is a derivation that the next readFile triggers (IFD).
+      # When empty, fall through to using the consumer's organic go.mod.
+      # Pass `pwd + "/go.mod"` (a path) rather than the string `goModPath` so
+      # the derivation gets a proper store-path reference.
+      mergedGoModFile =
+        if hasFlakeInputs && consumerGoMod != null then
+          mkMergedGoMod {
+            consumerGoMod = pwd + "/go.mod";
+            inherit go goFlakeInputs runCommand;
+          }
+        else
+          null;
+
+      # Final goMod: parsed from the merged file if present, else the consumer's.
+      goMod =
+        if mergedGoModFile != null then
+          parseGoMod (readFile mergedGoModFile)
+        else
+          consumerGoMod;
+
+      # Parse the consumer's gomod2nix.toml, then union with each flake input's
+      # gomod2nix.toml if any. Consumer wins on overlap.
+      consumerModulesStruct = if modules == null then { } else fromTOML (readFile modules);
+
+      flakeInputTomls = builtins.attrValues (
+        builtins.mapAttrs (
+          _: v:
+          let
+            path = "${v.src}${if v.subPath == "" then "" else "/${v.subPath}"}/gomod2nix.toml";
+          in
+          if builtins.pathExists path then fromTOML (readFile path) else { mod = { }; }
+        ) normalizedFlakeInputs
+      );
+
+      modulesStruct =
+        if hasFlakeInputs then
+          mergeGomod2nixTomls {
+            consumer = consumerModulesStruct;
+            flakeInputs = flakeInputTomls;
+          }
+        else
+          consumerModulesStruct;
 
       defaultPackage = modulesStruct.goPackagePath or "";
 
@@ -687,7 +743,7 @@ let
       // optionalAttrs (hasAttr "subPackages" modulesStruct) {
         subPackages = modulesStruct.subPackages;
       }
-      // attrs
+      // (removeAttrs attrs [ "goFlakeInputs" ])
       // {
         nativeBuildInputs = [
           go
@@ -711,7 +767,15 @@ let
         ldflags = effectiveLdflags;
         modRoot = attrs.modRoot or "";
 
-        preBuild = attrs.preBuild or "";
+        # When goFlakeInputs is non-empty, swap the source's organic go.mod
+        # for the merged one (with synthetic require/replace lines pointing
+        # at /nix/store paths). preBuild runs after goConfigHook's chdir, so
+        # we're already at the build's modRoot.
+        preBuild =
+          optionalString (mergedGoModFile != null) ''
+            cp --no-preserve=mode ${mergedGoModFile} go.mod
+          ''
+          + (attrs.preBuild or "");
 
         doCheck = attrs.doCheck or true;
 
@@ -722,6 +786,11 @@ let
         passthru = {
           inherit go vendorEnv hooks;
           goCacheEnv = cacheEnv;
+        }
+        // optionalAttrs (mergedGoModFile != null) {
+          # Exposed for debugging goFlakeInputs builds. Read with
+          # `nix build .#foo.passthru.mergedGoMod && cat result`.
+          mergedGoMod = mergedGoModFile;
         }
         // optionalAttrs (hasAttr "goPackagePath" modulesStruct) {
 

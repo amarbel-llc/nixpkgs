@@ -35,16 +35,15 @@ nix-build: _stage-untracked
     nix build --print-build-logs .#default
     ./result/bin/goflake-poc
 
-# Phase 3: build via the fork's buildGoApplication (gomod2nix). EXPECTED
-# TO FAIL today — the bridge pattern surfaces a structural mismatch with
-# buildGoApplication's eval-time local-replace handling. See README §
-# "Phase 3" and docs/features/0001-numtide-go2nix-overlay-builder.md
-# (`goFlakeInputs` proposal) for the fix.
+# Phase 3: build via the fork's buildGoApplication (gomod2nix). Now PASSes
+# via the goFlakeInputs arg — buildGoApplication constructs a merged
+# go.mod with synthetic require/replace lines pointing at the flake-input
+# store path, and the vendor tree symlinks the absolute path directly.
 [group('explore')]
 nix-build-via-gomod2nix: _stage-untracked
     rm -f flake.lock
     nix build --print-build-logs .#via-gomod2nix
-    ./result/bin/goflake-poc-via-gomod2nix
+    ./result/bin/goflake-poc
 
 # Clean transient artifacts.
 [group('explore')]
