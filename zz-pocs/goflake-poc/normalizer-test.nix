@@ -5,8 +5,8 @@ let
     normalizeFlakeInput;
 in
 {
-  bareDrv = normalizeFlakeInput pkgs.hello;
-  # Expected: { src = pkgs.hello; subPath = ""; }
+  bareDrv = normalizeFlakeInput ./.;
+  # Expected: { src = ./.; subPath = ""; }
 
   attrsForm = normalizeFlakeInput {
     src = pkgs.hello;
