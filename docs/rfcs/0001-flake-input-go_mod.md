@@ -197,7 +197,119 @@ as `v0.0.0-00010101000000-000000000000`.
 
 ## Producer interface: `packages.${system}.go-pkgs` and `mkGoPkgs`
 
-(filled in Task 4)
+### Flake output naming
+
+A Go-source-producing flake SHOULD expose its canonical Go source tree
+as the flake output:
+
+```
+packages.${system}.go-pkgs
+```
+
+The value MUST be a derivation (or path coercible to one) whose output
+is a directory containing a Go module: a `go.mod` at the root (or at
+a subdirectory addressable via the consumer's `subPath`) and the
+importable packages of that module.
+
+Consumers reference this attribute by name when wiring `goFlakeInputs`:
+
+```nix
+goFlakeInputs = {
+  "github.com/amarbel-llc/purse-first" =
+    inputs.purse-first.packages.${system}.go-pkgs;
+};
+```
+
+A producer MAY expose additional Go output variants under other
+attribute names (e.g. `go-pkgs-minimal`, `go-pkgs-server`). Consumers
+that need a non-default variant MUST reference it explicitly via the
+`{ src = ...; }` record form on the `goFlakeInputs` entry; the
+protocol places no constraint on those variant names and standardizes
+only the default attribute for discovery.
+
+### `mkGoPkgs` helper
+
+The fork's overlay SHOULD expose `pkgs.mkGoPkgs` as a
+middleware-aware producer-side wrapper:
+
+```nix
+mkGoPkgs = {
+  src,
+  middlewares ? [ ],
+  goFlakeInputs ? { },
+  subPath ? "",
+}: ...
+```
+
+> **Implementation status:** this RFC specifies the `mkGoPkgs`
+> interface; the implementation is deferred to a future change. Until
+> the helper lands in the overlay, producers MAY use
+> `pkgs.goSourceFilter` standalone (see § *Source filtering:
+> `goSourceFilter`*) as the value of `packages.${system}.go-pkgs`, or
+> set `go-pkgs = self` directly when no filtering or codegen is
+> needed.
+
+Arguments:
+
+- `src` — a derivation or path containing the Go source tree.
+  REQUIRED.
+- `middlewares` — a list of source transformations. Each middleware
+  MUST be a function `src -> src` (derivation to derivation). The
+  pipeline MUST be applied left-to-right as
+  `foldl' (acc: mw: mw acc) src middlewares`. When the list is empty
+  (the default), `mkGoPkgs` MUST return `src` unchanged.
+- `goFlakeInputs` — optional declaration of flake-input-driven Go
+  dependencies that the producer itself uses. When non-empty,
+  `mkGoPkgs` MUST attach the value to the result derivation as
+  `passthru.goFlakeInputs`. Downstream consumers of the resulting
+  `go-pkgs` derivation inherit those entries at depth-1 through the
+  bridge's transitive inheritance (see § *Multi-producer closures:
+  `follows` + passthru inheritance*).
+- `subPath` — optional subdirectory hint for tooling. The convention
+  itself MUST NOT slice the tree by `subPath`; consumers control
+  per-consumer slicing through the `subPath` attribute on
+  `goFlakeInputs` entries.
+
+### Producers without middleware
+
+A producer that ships hand-written Go with no codegen and no source
+filtering needs MAY use either of:
+
+```nix
+# Explicit, via helper (signals intent):
+packages.${system}.go-pkgs = pkgs.mkGoPkgs { src = self; };
+
+# Direct, bypassing the helper:
+packages.${system}.go-pkgs = self;
+```
+
+Both are valid; `mkGoPkgs { src = self; middlewares = [ ]; }` is the
+identity transformation. The bare-`self` form is RECOMMENDED only for
+trivially small repos where the build closure tax of non-Go file edits
+is negligible; otherwise, producers SHOULD use
+`pkgs.goSourceFilter { src = self; }` to scope the closure to
+Go-relevant files (see § *Source filtering: `goSourceFilter`*).
+
+### Producers with middleware
+
+A producer that runs codegen (e.g. via the future
+`pkgs.dagnabitExportMiddleware`) or otherwise transforms its source
+composes the pipeline via `mkGoPkgs`:
+
+```nix
+packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+  src = self;
+  middlewares = [
+    pkgs.goSourceFilterMiddleware
+    pkgs.dagnabitExportMiddleware  # example future middleware
+  ];
+};
+```
+
+The middleware contract is intentionally narrow — `src -> src` — so
+the set of allowed transformations stays composable. Producers MUST
+order middlewares according to data-flow dependencies; the convention
+does not provide automatic dependency resolution.
 
 ## Source filtering: `goSourceFilter`
 
