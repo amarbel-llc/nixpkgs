@@ -51,10 +51,12 @@ let
           );
         in
         ''
+          # Go 1.24+ refuses to run `go mod edit` when go.mod lives directly in
+          # /build (the sandbox temp root). A subdirectory satisfies the check.
           mkdir -p work
           cd work
           cp ${consumerGoMod} ./go.mod
-          chmod +w ./go.mod
+          chmod +w ./go.mod  # store-path cp preserves read-only; `go mod edit` needs write access
           ${editCommands}
           cp ./go.mod $out
         ''

@@ -20,6 +20,10 @@ mkMergedGoMod {
       src = hello;
       subPath = "";
     };
+    "github.com/example/lib-sub" = {
+      src = hello;
+      subPath = "share"; # exercises the "/${v.subPath}" branch
+    };
   };
   runCommand = pkgs.runCommand;
 }
