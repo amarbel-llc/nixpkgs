@@ -96,7 +96,104 @@ store path automatically, and `gomod2nix.toml` only tracks the
 
 ## Consumer interface: `goFlakeInputs`
 
-(filled in Task 3)
+Implementations MUST accept a `goFlakeInputs` argument on
+`buildGoApplication` and `mkGoEnv`. The argument is an attrset mapping
+Go module paths to source derivations.
+
+### Schema
+
+```nix
+goFlakeInputs :: AttrSet (Derivation | { src :: Derivation; subPath :: String })
+```
+
+Each entry's key MUST be a fully qualified Go module path (e.g.
+`github.com/amarbel-llc/dodder`). Each entry's value MUST be either:
+
+- a derivation whose output is a Go module source tree rooted at the
+  derivation's top level; or
+- a record `{ src = <derivation>; subPath = <string>; }`, where `src`
+  is such a derivation and `subPath` is a directory within `src` that
+  contains the Go module's `go.mod`.
+
+Implementations MUST NOT accept other value shapes (e.g. raw store
+paths, URLs, or fetcher specifications); callers wanting non-flake
+sources MUST wrap them in a derivation first.
+
+### Merge primitive
+
+Implementations MUST merge `goFlakeInputs` into the consumer's `go.mod`
+by injecting a `replace` directive per entry, semantically equivalent
+to `go mod edit -replace=<module>=<store-path>`. The merge MUST happen
+at Nix eval time, in parallel to the organic `goMod.replace` entries
+that `mkVendorEnv` already processes. Synthetic entries MUST take
+priority over any organic `require` pseudo-version for the same module
+path: the organic `require` line becomes vestigial and only needs to
+remain syntactically present so Go's parser is satisfied.
+
+Implementations MUST NOT require that the consumer's source filesystem
+contain a placeholder directory matching the replace target. Synthetic
+entries are derivation references at eval time; the value of an entry
+is passed through to the merged `go.mod` as the relevant store path
+directly, not reconstructed via `pwd + "/${value.path}"`. (This is the
+concrete blocker the FDR-0003 POC identified at
+`pkgs/build-support/gomod2nix/default.nix:198-205`; the protocol
+forbids that shape.)
+
+### Inline declaration
+
+`goFlakeInputs` MUST be passed inline as a builder argument. The
+protocol does not define any out-of-band declaration mechanism (no
+separate `flake-go-inputs.toml` manifest, no environment-variable
+escape hatch). The single source of truth for synthetic versions is
+the flake input's rev as recorded in `flake.lock`.
+
+### `mkGoEnv` parity
+
+Implementations MUST apply identical merge semantics in `mkGoEnv` as
+in `buildGoApplication`. A consumer's `nix develop` shell MUST see the
+same module graph as `nix build`. Implementing only the build-side
+silently reintroduces lockstep drift through the back door: editors
+and language servers in the devshell see one set of replace targets
+while the build sees another.
+
+### Out-of-Nix builds
+
+The protocol does NOT support `go build` invocations outside Nix. A
+consumer MUST run Go work through `nix develop` or `nix build`. The
+merged `go.mod` is materialized into the build sandbox at
+`buildGoApplication` time and is not written back to the consumer's
+working tree. Editor and language-server workflows that parse `go.mod`
+directly may need the merged form materialized into the workspace;
+that materialization step is a non-normative follow-up.
+
+### Example
+
+```nix
+{ pkgs, inputs, ... }:
+let
+  madder = pkgs.buildGoApplication {
+    pname = "madder";
+    src = ./.;
+    pwd = ./.;
+    subPackages = [ "cmd/madder" ];
+    modules = ./gomod2nix.toml;
+    goFlakeInputs = {
+      "github.com/amarbel-llc/dodder" = inputs.dodder;
+      "github.com/amarbel-llc/tap/go" = {
+        src = inputs.tap.packages.${pkgs.system}.go-pkgs;
+        subPath = "go";
+      };
+    };
+  };
+in {
+  packages.default = madder;
+}
+```
+
+The consumer's `gomod2nix.toml` MUST NOT carry entries for modules
+declared in `goFlakeInputs`; `go.mod` retains the `require` line
+(Go's parser needs *some* version) with a sentinel pseudo-version such
+as `v0.0.0-00010101000000-000000000000`.
 
 ## Producer interface: `packages.${system}.go-pkgs` and `mkGoPkgs`
 
