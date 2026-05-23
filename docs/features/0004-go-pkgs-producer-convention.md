@@ -165,6 +165,24 @@ passes, format normalizers) plug in the same way. The middleware
 contract is intentionally narrow — `src -> src` — so the set of allowed
 transformations stays composable.
 
+**Ownership boundary**: the *semantics* of `dagnabit export` itself —
+what `//go:generate dagnabit export` markers do, what the output `pkgs/`
+layout looks like, how the CLI handles partial regeneration — are
+owned by `amarbel-llc/purse-first:cmd/dagnabit/`, not by this FDR. The
+`dagnabitExportMiddleware` wrapper here is purely the
+Nix-derivation adapter. Future readers looking for dagnabit's own
+behavior contracts should consult purse-first directly; this FDR
+documents only how the dagnabit binary is invoked from a `mkGoPkgs`
+pipeline. The same boundary applies to any other middleware: the
+fork's overlay packages the adapter, the upstream tool owns its
+behavior.
+
+Concrete provisioning decisions for `dagnabitExportMiddleware` —
+where the `dagnabit` binary comes from at middleware build time, and
+whether the middleware contract needs parameterization for tools with
+flags — are tracked at
+[amarbel-llc/nixpkgs#35](https://github.com/amarbel-llc/nixpkgs/issues/35).
+
 ## Examples
 
 ### Hand-written-only producer (no codegen)
