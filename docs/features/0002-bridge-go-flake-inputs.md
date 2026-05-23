@@ -196,7 +196,13 @@ flake-input-driven replaces. Two natural shapes:
   entries into `mkVendorEnv` *parallel to* `goMod.replace`, but with
   the symlink target taken directly from the flake-input derivation
   rather than reconstructed via `pwd + "/${value.path}"`. The synthetic
-  entries never need to exist on the source filesystem.
+  entries never need to exist on the source filesystem at eval time.
+  At build time, a small `postPatch` step copies the merged `go.mod`
+  into the unpacked source so that `go build -mod=vendor`'s
+  source-tree checks see the synthetic `require` / `replace` lines;
+  this delivery mechanism is load-bearing but doesn't undermine the
+  eval-time substitution shape — the merge itself still happens at
+  eval time.
 - **Build-time deferral.** Move the local-replace symlinking out of the
   vendor-FOD and into a `postUnpack`/`preBuild` phase of the main
   derivation, mirroring `buildGoModule`'s approach. More invasive but

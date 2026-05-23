@@ -50,10 +50,12 @@ mandatory — see FDR-0002 §Limitations).
 
 ## Mechanism: eval-time substitution
 
-All `goFlakeInputs` processing happens inside `buildGoApplication`'s
+Most `goFlakeInputs` processing happens inside `buildGoApplication`'s
 top-level `let` block, *before* the derivation is constructed. No
 `preBuild` shell phase, no FOD, no recursive nix. Three intermediate
-nix-eval-time derivations chain together:
+nix-eval-time derivations chain together, plus a single `postPatch`
+step that swaps the merged `go.mod` into the unpacked source tree at
+build time (see *Build-time go.mod swap* below).
 
 ### 1. `mergedGoMod` derivation
 
@@ -140,15 +142,42 @@ ln -s ${
 } vendor/${name}
 ```
 
+### 4. Build-time `go.mod` swap (`postPatch`)
+
+`mergedGoMod` flowing into `mkVendorEnv` is necessary but not
+sufficient. The Task 5 implementation surfaced that `go build
+-mod=vendor` also reads the **source-tree** `go.mod` for the module
+declaration and the `replace` map; the unpacked source's organic
+`go.mod` lacks the synthetic `require` / `replace` lines that
+`goFlakeInputs` introduces. Without a swap, the build sees mismatched
+vendor entries (which `mkVendorEnv` placed using the merged map) and a
+source-tree `go.mod` that doesn't acknowledge them.
+
+The fix is a one-line `postPatch` shell step on the main derivation:
+
+```nix
+postPatch = ''
+  cp ${mergedGoModFile} go.mod
+'';
+```
+
+This runs after `unpackPhase` and before `configurePhase` / `buildPhase`,
+so the Go toolchain sees the merged `go.mod` for the rest of the build.
+`postPatch` is chosen over `preBuild` deliberately (see *Composition
+invariants* below).
+
 ## Composition invariants
 
 From the buildGoRace/buildGoCover research:
 
-1. **All `goFlakeInputs` work stays in the `let` block.** No
-   `preBuild` shell additions for synthetic-replace handling. The
-   `mergedGoMod` / `mergedGomod2nixToml` derivations are inputs to
-   `mkVendorEnv` and `buildGoApplication`'s final derivation — they're
-   closures captured at construction, immune to `overrideAttrs`.
+1. **Build-time mutations of the source tree (the merged-`go.mod`
+   swap) live in `postPatch`, not `preBuild`.** This avoids preBuild
+   concatenation conflicts with `buildGoRace` / `buildGoCover`
+   wrappers, which use `preBuild` for `buildFlagsArray+=` shell
+   fragments. Everything else — the `mergedGoMod` /
+   `mergedGomod2nixToml` derivations consumed by `mkVendorEnv` — stays
+   in the `let` block as closures captured at construction time,
+   immune to `overrideAttrs`.
 2. **No new top-level attrs that the wrappers touch.** Surface
    `goFlakeInputs` as `passthru.goFlakeInputs` for debugging/inspection
    only.
