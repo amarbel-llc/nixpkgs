@@ -234,12 +234,12 @@ let
           inherit (meta) version hash;
           inherit go;
         }
-      ) modulesStruct.mod;
+      ) (modulesStruct.mod or { });
     in
     runCommand "vendor-env"
       {
         nativeBuildInputs = [ go ];
-        json = toJSON (filterAttrs (n: _: n != defaultPackage) modulesStruct.mod);
+        json = toJSON (filterAttrs (n: _: n != defaultPackage) (modulesStruct.mod or { }));
 
         sources = toJSON (filterAttrs (n: _: n != defaultPackage) sources);
 

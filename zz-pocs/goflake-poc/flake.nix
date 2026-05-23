@@ -50,6 +50,9 @@
         mkgoenv-test = pkgs.callPackage ./mkgoenv-test.nix {
           pocLibSrc = poc-lib;
         };
+        mkgoenv-schema-only-test = pkgs.callPackage ./mkgoenv-schema-only-test.nix {
+          pocLibSrc = poc-lib;
+        };
       };
     };
 }
