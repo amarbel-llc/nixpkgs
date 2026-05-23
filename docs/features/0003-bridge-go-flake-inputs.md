@@ -142,6 +142,78 @@ The consumer's `gomod2nix.toml` loses the `dodder` entry entirely.
 version) with a sentinel pseudo-version. Bumping dodder is now a
 `nix flake update --input dodder` away.
 
+## Multi-producer closures: `follows` + passthru inheritance
+
+When a consumer depends on multiple flake inputs that themselves share
+a transitive Go dependency, two conventions keep the closure coherent.
+
+### Shared transitive deps: align with `follows`
+
+A consumer that pulls both `tap` and `dewey` as flake inputs — and where
+`tap` itself depends on `dewey` — should anchor `tap`'s view of dewey to
+the same input via `follows`:
+
+```nix
+inputs = {
+  dewey.url = "github:amarbel-llc/purse-first/libs/dewey";
+  tap = {
+    url = "github:amarbel-llc/tap";
+    inputs.dewey.follows = "dewey";   # tap's dewey is now madder's dewey
+  };
+};
+```
+
+`follows` is Nix's existing flake-level alignment mechanism; the bridge
+doesn't replicate or enforce version policy on top of it. Go's
+module-path encoding (`X` vs `X/v2`) already makes cross-major substitution
+structurally impossible, and within-cohort version mismatches surface as
+ordinary compile errors via `-mod=vendor`. The build is the
+authoritative check; `follows` ensures the inputs align before the
+build even runs.
+
+### Producer-side passthru inheritance
+
+A producer flake that itself uses `goFlakeInputs` to source its Go
+modules can expose those declarations to consumers via
+`passthru.goFlakeInputs` on its `go-pkgs` derivation. The bridge reads
+each direct flake-input's `passthru.goFlakeInputs` and unions the
+entries into the consumer's merged map (depth-1; consumer-declared
+entries win on conflict). When combined with `follows` above, the
+inherited entries naturally resolve to the same flake inputs the
+consumer already has, with no extra declaration:
+
+```nix
+# producer (e.g. tap)
+packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+  src = self;
+  goFlakeInputs = {
+    "github.com/amarbel-llc/purse-first/libs/dewey" = inputs.dewey;
+  };
+};
+# mkGoPkgs attaches passthru.goFlakeInputs automatically — see FDR-0004.
+
+# consumer (e.g. madder)
+goFlakeInputs = {
+  "github.com/amarbel-llc/tap/go" = {
+    src = inputs.tap.packages.${system}.go-pkgs;
+    subPath = "go";
+  };
+  # The dewey entry is INHERITED from tap's passthru — no need to
+  # redeclare here. With inputs.tap.inputs.dewey.follows = "dewey",
+  # the inherited entry points at the consumer's dewey input.
+};
+```
+
+The depth-1 limit is intentional: deeper chains reintroduce N×M
+declaration overhead in different shape, and full transitive resolution
+is the FOD-regen path documented as deferred work below. For
+deeply-nested closures today, the consumer declares each direct
+producer's flake input and `follows`-aligns shared deps; the bridge
+inherits one level of passthru and that's enough for the fork's
+current shapes.
+
+Tracking: [amarbel-llc/nixpkgs#36](https://github.com/amarbel-llc/nixpkgs/issues/36).
+
 ## POC findings (commit f99a3ff43278, `zz-pocs/goflake-poc/`)
 
 A three-phase probe of the bridge pattern's foundation:
@@ -222,13 +294,16 @@ Tracking issue: [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/
   `require` via `go mod edit -require` at eval time is a follow-up
   ergonomics fix; the bridge mechanic itself doesn't depend on it.
 
-- **Transitive deps of the flake input.** If a flake input has its own
-  Go dependencies, who tracks them? Options under discussion: (a)
-  caller adds them to their own `gomod2nix.toml`; (b) builder runs
-  `gomod2nix generate` against the merged tree inside a FOD; (c) the
-  flake input ships its own `gomod2nix.toml` and the builder unions
-  them. The POC sidestepped this (zero-dep library); real consumers
-  will not. Resolution required before promotion to `experimental`.
+- **Transitive deps of the flake input.** A flake input's organic
+  transitive deps come in through its `gomod2nix.toml`, which the
+  bridge unions with the consumer's (consumer wins on conflict). For
+  the flake-input-driven transitive deps (i.e. when the producer itself
+  uses `goFlakeInputs`), the bridge inherits the producer's
+  `passthru.goFlakeInputs` at depth-1; see *Multi-producer closures*
+  above. Deeper-than-one-level inheritance — full FOD-regen of the
+  merged module set — is deferred until a closure surfaces that
+  depth-1 + consumer redeclaration cannot express. Resolution captured
+  in [amarbel-llc/nixpkgs#36](https://github.com/amarbel-llc/nixpkgs/issues/36).
 
 - **Source-only inputs assumed.** `goFlakeInputs` entries are expected
   to be derivations whose output is a Go module source tree (own

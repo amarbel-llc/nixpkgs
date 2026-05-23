@@ -87,7 +87,7 @@ The fork's overlay exposes `pkgs.mkGoPkgs` for producers who want a
 middleware-aware wrapper:
 
 ```nix
-mkGoPkgs = { src, middlewares ? [ ], subPath ? "" }: ...
+mkGoPkgs = { src, middlewares ? [ ], goFlakeInputs ? { }, subPath ? "" }: ...
 ```
 
 Arguments:
@@ -97,9 +97,25 @@ Arguments:
   function `src -> src` (derivation → derivation). The pipeline is
   applied left-to-right: `foldl' (acc: mw: mw acc) src middlewares`. When
   the list is empty (default), `mkGoPkgs` returns `src` unchanged.
+- `goFlakeInputs` — optional declaration of flake-input-driven Go
+  dependencies that the producer itself uses. When non-empty, `mkGoPkgs`
+  attaches the value to the result derivation as
+  `passthru.goFlakeInputs`. Consumers of this `go-pkgs` derivation
+  inherit those entries at depth-1 through the bridge's transitive
+  inheritance (see [FDR-0003 § *Multi-producer closures*](./0003-bridge-go-flake-inputs.md)).
+  Producers that don't themselves consume flake-input-driven deps leave
+  this empty.
 - `subPath` — optional subdirectory hint for tooling. The convention
   itself does not slice the tree by `subPath`; consumers control that at
   consume time via the `subPath` attribute on `goFlakeInputs` entries.
+
+The `passthru.goFlakeInputs` attachment is the producer-side half of
+the bridge's depth-1 transitive inheritance convention. A producer
+that itself sources Go deps from flake inputs declares those deps once
+via `mkGoPkgs`'s `goFlakeInputs` arg; downstream consumers inherit
+those declarations without redeclaring them, and align shared deps
+across the closure with `inputs.<producer>.inputs.<dep>.follows`
+(again, see FDR-0003).
 
 ### Producers without middleware
 
@@ -204,6 +220,51 @@ goFlakeInputs = {
   };
 };
 ```
+
+### Producer that itself sources Go deps from flake inputs
+
+A producer whose own Go module depends on another fork's flake-input
+declares that dep through `mkGoPkgs`'s `goFlakeInputs` arg.
+`mkGoPkgs` attaches it to the result derivation as
+`passthru.goFlakeInputs` so downstream consumers inherit it without
+redeclaring:
+
+```nix
+# producer flake.nix (e.g. amarbel-llc/tap, future state)
+outputs = { self, nixpkgs, dewey, ... }:
+  let pkgs = nixpkgs.legacyPackages.${system}; in {
+    packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+      src = self;
+      goFlakeInputs = {
+        "github.com/amarbel-llc/purse-first/libs/dewey" = dewey;
+      };
+    };
+  };
+
+# consumer flake.nix (e.g. amarbel-llc/madder)
+inputs = {
+  dewey.url = "github:amarbel-llc/purse-first/libs/dewey";
+  tap = {
+    url = "github:amarbel-llc/tap";
+    inputs.dewey.follows = "dewey";  # align tap's dewey with madder's
+  };
+};
+
+# in the buildGoApplication call:
+goFlakeInputs = {
+  "github.com/amarbel-llc/tap/go" = {
+    src = inputs.tap.packages.${system}.go-pkgs;
+    subPath = "go";
+  };
+  # No explicit dewey entry — inherited from tap's passthru.goFlakeInputs.
+  # With the follows above, the inherited entry resolves to the same
+  # dewey input madder already has.
+};
+```
+
+This is the depth-1 transitive inheritance the bridge supports. See
+[FDR-0003 § *Multi-producer closures*](./0003-bridge-go-flake-inputs.md)
+for the consumer-side mechanics and the `follows` alignment pattern.
 
 ## Limitations
 
