@@ -515,7 +515,88 @@ Three reasons motivate the colocation pattern:
 
 ## Multi-producer closures: `follows` + passthru inheritance
 
-(filled in Task 7)
+When a consumer depends on multiple flake inputs that themselves share
+a transitive Go dependency, two mechanisms keep the resulting closure
+coherent: Nix flake `follows` for input alignment, and depth-1
+`passthru.goFlakeInputs` inheritance for declaration reuse.
+
+### Shared transitive deps: align with `follows`
+
+A consumer that pulls both `tap` and `dewey` as flake inputs — and
+where `tap` itself depends on `dewey` — SHOULD anchor `tap`'s view of
+dewey to the consumer's own input via `follows`:
+
+```nix
+inputs = {
+  dewey.url = "github:amarbel-llc/purse-first/libs/dewey";
+  tap = {
+    url = "github:amarbel-llc/tap";
+    inputs.dewey.follows = "dewey";   # tap's dewey is now madder's dewey
+  };
+};
+```
+
+`follows` is Nix's existing flake-level alignment mechanism; the
+bridge MUST NOT replicate or enforce version policy on top of it.
+Go's module-path encoding (`X` vs `X/v2`) already makes cross-major
+substitution structurally impossible, and within-cohort version
+mismatches surface as ordinary compile errors via `-mod=vendor`. The
+build is the authoritative check; `follows` ensures the inputs align
+before the build even runs.
+
+### Producer-side passthru inheritance
+
+A producer flake that itself uses `goFlakeInputs` to source its Go
+modules MAY expose those declarations to consumers via
+`passthru.goFlakeInputs` on its `go-pkgs` derivation. The producer
+SHOULD attach this passthru via `mkGoPkgs`'s `goFlakeInputs` argument
+(see § *Producer interface: `packages.${system}.go-pkgs` and
+`mkGoPkgs`*); the helper performs the attachment automatically.
+
+Implementations of the bridge MUST read each direct flake-input's
+`passthru.goFlakeInputs` and union the entries into the consumer's
+merged map at depth-1. Consumer-declared entries MUST win on conflict:
+when a Go module path appears both in the consumer's own
+`goFlakeInputs` and in an inherited passthru, the consumer's entry
+takes priority.
+
+When combined with `follows` alignment above, inherited entries
+naturally resolve to the same flake inputs the consumer already has,
+with no extra declaration required:
+
+```nix
+# producer (e.g. tap)
+packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+  src = self;
+  goFlakeInputs = {
+    "github.com/amarbel-llc/purse-first/libs/dewey" = inputs.dewey;
+  };
+};
+# mkGoPkgs attaches passthru.goFlakeInputs automatically.
+
+# consumer (e.g. madder)
+goFlakeInputs = {
+  "github.com/amarbel-llc/tap/go" = {
+    src = inputs.tap.packages.${system}.go-pkgs;
+    subPath = "go";
+  };
+  # The dewey entry is INHERITED from tap's passthru — no need to
+  # redeclare here. With inputs.tap.inputs.dewey.follows = "dewey",
+  # the inherited entry points at the consumer's dewey input.
+};
+```
+
+### Depth-1 is the normative limit
+
+The protocol fixes depth-1 as the normative inheritance limit.
+Implementations MUST NOT chase `passthru.goFlakeInputs` recursively
+through inherited entries. Deeper-than-one transitive resolution is
+deferred to the FOD-regen path tracked at
+[amarbel-llc/nixpkgs#36](https://github.com/amarbel-llc/nixpkgs/issues/36);
+until that path lands, deeply nested closures resolve by the consumer
+declaring each direct producer's flake input and aligning shared deps
+via `follows`. The depth-1 floor is sufficient for every closure shape
+the fork has surfaced so far.
 
 ## Limitations
 
