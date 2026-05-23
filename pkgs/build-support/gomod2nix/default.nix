@@ -80,7 +80,7 @@ let
   inherit (import ./parser.nix) parseGoMod parseGoWork;
 
   internals = import ./internals.nix { };
-  inherit (internals) normalizeFlakeInput;
+  inherit (internals) normalizeFlakeInput sentinelPseudoVersion mkMergedGoMod;
 
   # Internal only build-time attributes
   internal =
