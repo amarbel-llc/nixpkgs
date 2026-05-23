@@ -2,11 +2,11 @@
   description = "amarbel-llc overlay flake — fork-specific package additions and pins on top of nixpkgs.";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/master";
+    nixpkgs-master.url = "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb";
   };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs-master }:
     let
       systems = [
         "x86_64-linux"
@@ -14,19 +14,19 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
+      forAllSystems = nixpkgs-master.lib.genAttrs systems;
     in
     {
-      lib = nixpkgs.lib;
+      lib = nixpkgs-master.lib;
 
       overlays = {
-        default = nixpkgs.lib.composeManyExtensions (import ./overlays nixpkgs.lib);
+        default = nixpkgs-master.lib.composeManyExtensions (import ./overlays nixpkgs-master.lib);
         amarbelPackages = import ./overlays/amarbel-packages.nix;
       };
 
       legacyPackages = forAllSystems (
         system:
-        import nixpkgs {
+        import nixpkgs-master {
           inherit system;
           overlays = [ self.overlays.default ];
           config.allowUnfree = true;
@@ -62,6 +62,6 @@
         }
       );
 
-      nixosModules = nixpkgs.nixosModules;
+      nixosModules = nixpkgs-master.nixosModules;
     };
 }
