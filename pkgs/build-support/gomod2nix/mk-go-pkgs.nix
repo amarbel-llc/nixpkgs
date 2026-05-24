@@ -68,6 +68,23 @@ let
   mkGoPkgs =
     {
       src,
+      # Optional explicit override for the output store-path prefix.
+      # When omitted, the helper picks a name from (in order):
+      #   1. `src.name` if `src` is a `cleanSourceWith`-like attrset
+      #      (rarely set for flake-input sources)
+      #   2. The last path element of `module <path>` in
+      #      `${src}/go.mod`, if that file is readable at eval time
+      #      without forcing IFD (typically: when `src` resolves to a
+      #      path already in the store — flake inputs, `./.`-style
+      #      paths, etc.)
+      #   3. The fallback string "source".
+      #
+      # Adopters with polyglot layouts (`src = self + "/go"`) typically
+      # set `name` explicitly to get a repo-prefixed store path —
+      # otherwise the go.mod inference yields the last path element,
+      # which for `module github.com/owner/repo/go` is just `"go"`.
+      # See amarbel-llc/nixpkgs#49 for the motivating discussion.
+      name ? null,
       # Extra regex patterns added to BOTH outputs (e.g. embedded
       # assets, top-level config files referenced by //go:embed).
       extras ? [ ],
@@ -76,7 +93,29 @@ let
       testExtras ? [ ],
     }:
     let
-      baseName = src.name or "source";
+      # Infer a name from go.mod's `module <path>` directive, taking
+      # the last path element. Guarded by `pathExists` so missing
+      # go.mod files cleanly fall through to "source" without throwing.
+      inferredName =
+        if !(builtins.pathExists (src + "/go.mod")) then
+          "source"
+        else
+          let
+            goMod = builtins.readFile (src + "/go.mod");
+            match = builtins.match ".*\nmodule[ \t]+([^ \t\n]+).*" ("\n" + goMod);
+          in
+          if match == null then
+            "source"
+          else
+            lib.last (lib.splitString "/" (lib.head match));
+
+      baseName =
+        if name != null then
+          name
+        else if src ? name then
+          src.name
+        else
+          inferredName;
 
       isExtra = relPath: lib.any (re: builtins.match re relPath != null) extras;
       isTestExtra = relPath: lib.any (re: builtins.match re relPath != null) testExtras;

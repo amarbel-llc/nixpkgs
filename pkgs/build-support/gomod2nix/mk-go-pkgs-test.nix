@@ -51,6 +51,21 @@ let
     testExtras = [ "^.*\\.fixtures$" ]; # synthetic, fixture has none
   };
 
+  # #49: name override + go.mod inference.
+  # The fixture is a runCommand derivation, which has `.name =
+  # "mk-go-pkgs-fixture"`. With no `name` override, `src.name`
+  # precedence wins → "mk-go-pkgs-fixture-go-pkgs". To exercise the
+  # go.mod inference branch (the typical adopter case where
+  # `src = self + "/go"` is a string with no `.name`), coerce the
+  # fixture to a string via interpolation.
+  builtWithExplicitName = pkgs.mkGoPkgs {
+    src = fixture;
+    name = "madder";
+  };
+  builtFromString = pkgs.mkGoPkgs {
+    src = "${fixture}"; # string-coerced — no .name attribute
+  };
+
   assert' = label: cond: if cond then null else throw "${label}: assertion failed";
 
   inherit (pkgs.lib) isDerivation;
@@ -125,6 +140,26 @@ pkgs.runCommand "mk-go-pkgs-tests"
       # extras applies to BOTH outputs.
       (assert' "extras: prod gets README.md when in extras" extrasProdHasReadme)
       (assert' "extras: test gets README.md when in extras" extrasTestHasReadme)
+
+      # #49: name override + go.mod inference + src.name fallthrough.
+      # Precedence: explicit `name` → `src.name` → go.mod inferred → "source".
+      #
+      # With derivation src (has .name = "mk-go-pkgs-fixture"):
+      #   src.name path wins.
+      (assert' "name: src.name wins when present (#49)"
+        (built.go-pkgs.name == "mk-go-pkgs-fixture-go-pkgs"))
+      # With explicit override:
+      (assert' "name: explicit override wins over inference (#49)"
+        (builtWithExplicitName.go-pkgs.name == "madder-go-pkgs"))
+      (assert' "name: explicit override applies to test variant too (#49)"
+        (builtWithExplicitName.go-pkgs-test.name == "madder-go-pkgs-test"))
+      # With string src (no .name attr), go.mod inference kicks in.
+      # Fixture's go.mod declares `module example.com/x`; last path
+      # element is "x".
+      (assert' "name: go.mod inference yields last module-path element (#49)"
+        (builtFromString.go-pkgs.name == "x-go-pkgs"))
+      (assert' "name: go.mod inference on test variant (#49)"
+        (builtFromString.go-pkgs-test.name == "x-go-pkgs-test"))
     ];
   }
   "touch $out"

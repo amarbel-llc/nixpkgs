@@ -32,6 +32,14 @@ all fail).
 - *src* — REQUIRED. A path or derivation containing the Go source
   tree. For polyglot repos with the Go module under a subdirectory,
   pass *self + "/go"*.
+- *name* — OPTIONAL explicit override for the output store-path
+  prefix. When omitted, falls through (in order) to *src.name* (when
+  *src* is a cleanSourceWith-like attrset), then to the last path
+  element of the *module* directive in *${src}/go.mod*, then to
+  *"source"*. Adopters with polyglot layouts (*src = self + "/go"*)
+  typically set *name* explicitly to get a repo-prefixed store path
+  (otherwise the inference yields just *"go"*). See
+  amarbel-llc/nixpkgs#49.
 - *extras* — OPTIONAL list of POSIX extended-regex strings added to
   the keep-set of *both* outputs. Use for files relevant to both
   prod and test builds (e.g. embedded asset directories, top-level
