@@ -72,6 +72,17 @@ nix-build-go-pkgs: _stage-untracked
     nix build --print-build-logs .#go-pkgs-test
     ls -la result
 
+# Phase 7b: verify goSourceFilter passes the strictest gate, `nix flake
+# check`. Tracks amarbel-llc/nixpkgs#44. `nix flake check` requires
+# `lib.isDerivation` to be true on every `packages.<system>.<name>` —
+# strictly stronger than `nix build`, which accepts strings-with-context.
+# A bare `builtins.path` (the post-#38 form) passes `nix build` but
+# fails this check; the runCommand wrap satisfies both.
+[group('explore')]
+nix-flake-check-go-pkgs: _stage-untracked
+    rm -f flake.lock
+    nix flake check --keep-going .
+
 # Devshell parity (Task 6): mkGoEnv with goFlakeInputs must produce the
 # same merged go.mod and vendorEnv as buildGoApplication. Asserts the
 # store paths match — strongest possible parity, since equal store paths

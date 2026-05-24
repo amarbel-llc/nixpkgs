@@ -1,7 +1,7 @@
 # Source-tree filter for the go-pkgs producer convention (RFC 0001).
-# Returns a *path* (the filtered store path of `src`) that keeps
-# Go-relevant regular files (matched against the default keep-set or
-# caller-supplied `extras` regex patterns). Directories are always
+# Returns a *derivation* whose output is the filtered tree of `src` —
+# keeps Go-relevant regular files (matched against the default keep-set
+# or caller-supplied `extras` regex patterns). Directories are always
 # traversed so the filter composes on deep trees; empty directories
 # that have no matching descendants are preserved in the output
 # (harmless for `go build`).
@@ -18,15 +18,25 @@
 #    files only) this helper applies the directory-always-allow rule
 #    in its own predicate.
 #
-# 2. `lib.cleanSourceWith` returns an attrset `{ _isLibCleanSourceWith;
-#    origSrc; filter; name; outPath; }`, which the flake schema rejects
-#    in the `packages.<system>.<name>` slot ("expected ... a derivation
-#    or path but found a set"). `builtins.path` is the lower-level
-#    primitive that returns an actual path value, which the flake
-#    schema accepts directly. Producers can then write
-#    `packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };`
-#    without a `.outPath` coercion (see amarbel-llc/nixpkgs#38, #43).
-{ lib }:
+# 2. Three flake-schema gates apply at three different layers:
+#    - `nix eval` accepts any value.
+#    - `nix build .#go-pkgs` accepts derivations, paths, or
+#      strings-with-context that look like store paths.
+#    - `nix flake check` is strictest: the value MUST be a derivation
+#      (`lib.isDerivation` returns true; equivalent to checking for
+#      `type = "derivation"`).
+#
+#    A bare `lib.cleanSourceWith` invocation returns a set with
+#    `outPath`, which fails the `nix build` gate (see
+#    amarbel-llc/nixpkgs#38). A bare `builtins.path` invocation
+#    returns a string-with-context, which passes `nix build` but
+#    fails `nix flake check` (see amarbel-llc/nixpkgs#44).
+#
+#    To satisfy all three gates this helper wraps the filtered
+#    `builtins.path` result in a `runCommand` derivation that copies
+#    the filtered tree into `$out`. `preferLocalBuild = true` +
+#    `allowSubstitutes = false` keeps the wrap-step cheap and local.
+{ lib, runCommand }:
 let
   defaultRegexes = [
     ".*\\.go$"
@@ -45,17 +55,24 @@ let
       # Unwrap an already-filtered src so the relative-path computation
       # stays anchored at the original source root when composing.
       origSrc = if src ? origSrc then src.origSrc else src;
-    in
-    builtins.path {
       name = src.name or "source";
-      path = origSrc;
-      filter =
-        path: type:
-        let
-          relPath = lib.removePrefix (toString origSrc + "/") (toString path);
-        in
-        type == "directory" || lib.any (re: builtins.match re relPath != null) regexes;
-    };
+      filteredPath = builtins.path {
+        inherit name;
+        path = origSrc;
+        filter =
+          path: type:
+          let
+            relPath = lib.removePrefix (toString origSrc + "/") (toString path);
+          in
+          type == "directory" || lib.any (re: builtins.match re relPath != null) regexes;
+      };
+    in
+    runCommand name {
+      preferLocalBuild = true;
+      allowSubstitutes = false;
+    } ''
+      cp -r ${filteredPath} $out
+    '';
 
   goSourceFilterMiddleware = src: goSourceFilter { inherit src; };
 in

@@ -84,7 +84,7 @@ let
     mkMergedView
     ;
 
-  sourceFilter = import ./source-filter.nix { inherit lib; };
+  sourceFilter = import ./source-filter.nix { inherit lib runCommand; };
   inherit (sourceFilter) goSourceFilter goSourceFilterMiddleware;
 
   # Internal only build-time attributes

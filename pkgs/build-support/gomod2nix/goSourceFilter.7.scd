@@ -15,12 +15,14 @@ packages.${system}.go-pkgs = pkgs.goSourceFilter {
 
 # DESCRIPTION
 
-*pkgs.goSourceFilter* produces a filtered view of a Go project's
-source tree as a store-path-coercible value (via *builtins.path*).
-The output is suitable for direct use as a
-*packages.${system}.go-pkgs* flake output (per RFC 0001; no *.outPath*
-coercion needed) and as *src* to *buildGoApplication* via the
-*goFlakeInputs* bridge.
+*pkgs.goSourceFilter* produces a **derivation** whose output is the
+filtered tree of a Go project's source. The result satisfies the
+strictest flake-output gate (*nix flake check* requires *isDerivation*
+to be true; see amarbel-llc/nixpkgs#44) and is suitable for direct use
+as a *packages.${system}.go-pkgs* flake output (per RFC 0001) and as
+*src* to *buildGoApplication* via the *goFlakeInputs* bridge.
+Internally the filter is built with *builtins.path* and wrapped in a
+*runCommand* that copies the filtered tree into *$out*.
 
 The default keep-set is the minimum required by the Go build system
 plus the *gomod2nix.toml* lockfile:
@@ -43,11 +45,12 @@ patterns; see *EXTRAS* below.
 # EXTRAS
 
 *extras* are applied via *builtins.path* internally (with a filter
-predicate). Directories are always traversed (so the filter composes
-on deep trees), and the regex list (default keep-set plus *extras*)
-is matched against the source-tree-relative path of each regular file
-via *builtins.match*. Patterns are *regex* strings, not glob patterns;
-nixpkgs stdlib does not ship glob matching.
+predicate); the resulting filtered tree is then wrapped in a
+*runCommand* derivation. Directories are always traversed (so the
+filter composes on deep trees), and the regex list (default keep-set
+plus *extras*) is matched against the source-tree-relative path of
+each regular file via *builtins.match*. Patterns are *regex* strings,
+not glob patterns; nixpkgs stdlib does not ship glob matching.
 
 Examples:
 
@@ -68,14 +71,14 @@ extras = [ "^doc/.*" "^VERSION$" ".*\\.tmpl$" ];
 # STORE PATH NAMING
 
 *goSourceFilter* preserves *src.name*. The resulting store path is
-named identically to *src*. Producers who want a more diagnostic
-name can rebuild the path with a different *name*:
+named identically to *src*. Producers who want a more diagnostic name
+can re-wrap with another *runCommand* so the renamed output is also a
+derivation (passes *nix flake check*):
 
 ```
-builtins.path {
-  name = "${src.name}-go-source";
-  path = pkgs.goSourceFilter { inherit src; };
-}
+pkgs.runCommand "${src.name}-go-source" { } ''
+  cp -r ${pkgs.goSourceFilter { inherit src; }} $out
+''
 ```
 
 # MIDDLEWARE WRAPPER
@@ -99,7 +102,7 @@ packages.${system}.go-pkgs = pkgs.mkGoPkgs {
 - *extras* uses regex, not globs (no nixpkgs stdlib equivalent of
   *fnmatch*).
 - Store-path naming preserves *src.name* by default; rename by
-  re-wrapping with *builtins.path* if desired.
+  re-wrapping with *runCommand* if desired (see STORE PATH NAMING).
 - *goSourceFilter* operates on *src* as a single tree. Multi-module
   repos with separate Go modules in different subdirectories need
   per-module filter invocations.

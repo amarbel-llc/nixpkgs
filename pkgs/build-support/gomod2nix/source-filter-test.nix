@@ -50,20 +50,26 @@ pkgs.runCommand "go-source-filter-tests"
         (builtins.elem "doc" basicFiles))
       (assert' "middleware: behaves identically to goSourceFilter with no extras"
         (middlewareFiles == basicFiles))
-      # Regression check for amarbel-llc/nixpkgs#38: result must NOT be a
-      # set, so it passes the flake schema check for packages.<system>.<name>
-      # ("expected ... a derivation or path but found a set: { ... }").
-      # `builtins.path` returns a string (store path with context), which
-      # the flake schema accepts; `lib.cleanSourceWith` returns an attrset,
-      # which it rejects. If this assertion fails, downstream producers
-      # can't write `go-pkgs = pkgs.goSourceFilter { ... };` without an
-      # explicit `.outPath` coercion. The POC fixture at
-      # zz-pocs/goflake-poc/.#go-pkgs-test exercises the flake-schema
-      # acceptance end-to-end.
-      (assert' "type: goSourceFilter result must not be a set (regression check for #38)"
-        (builtins.typeOf basic != "set"))
-      (assert' "type: middleware result must not be a set (regression check for #38)"
-        (builtins.typeOf middlewareResult != "set"))
+      # Regression check for amarbel-llc/nixpkgs#38 + #44: the result MUST
+      # be a real derivation so it passes BOTH `nix build .#go-pkgs` AND
+      # `nix flake check`.
+      #
+      # - `nix build` accepts derivations, paths, or strings-with-context
+      #   that look like store paths.
+      # - `nix flake check` is strictest: requires `pkgs.lib.isDerivation` true.
+      #
+      # `lib.cleanSourceWith` returns an attrset (fails both — #38).
+      # `builtins.path` returns a string-with-context (passes `nix build`,
+      # fails `nix flake check` — #44). Wrapping the filter in `runCommand`
+      # produces a derivation that passes both.
+      #
+      # The POC fixture at zz-pocs/goflake-poc/.#go-pkgs-test exercises
+      # the `nix build` path end-to-end; the `nix-flake-check-go-pkgs`
+      # recipe exercises the `nix flake check` path.
+      (assert' "type: goSourceFilter result must be a derivation (#38 + #44)"
+        (pkgs.lib.isDerivation basic))
+      (assert' "type: middleware result must be a derivation (#38 + #44)"
+        (pkgs.lib.isDerivation middlewareResult))
     ];
   }
   "touch $out"

@@ -349,14 +349,23 @@ Arguments:
 - `extras` — OPTIONAL. A list of POSIX extended-regex strings (default:
   empty) that augment the default keep-set.
 
-`goSourceFilter` MUST be implemented as a `builtins.path` invocation
-(the primitive that both `lib.cleanSourceWith` and
-`lib.sources.sourceByRegex` build on top of) where directories are
-always traversed and regex patterns are matched against the
-source-tree-relative path of each regular file. The output MUST be a
-store-path-coercible value (which is what `builtins.path` returns)
-suitable for direct use as `packages.<system>.go-pkgs` without
-`.outPath` coercion (see amarbel-llc/nixpkgs#38).
+`goSourceFilter` MUST produce a **derivation** (i.e. `lib.isDerivation`
+true) whose output is the filtered tree of `src`. Directories MUST be
+always traversed and regex patterns MUST be matched against the
+source-tree-relative path of each regular file.
+
+The reference implementation builds the filter with `builtins.path`
+(which both `lib.cleanSourceWith` and `lib.sources.sourceByRegex`
+delegate to) and then wraps the result in a `runCommand` that copies
+the filtered tree into `$out`. Returning a real derivation is required
+because `nix flake check` is strictly stronger than `nix build`: it
+runs `isDerivation` on every `packages.<system>.<name>` value. A bare
+`lib.cleanSourceWith` set fails both gates
+(see amarbel-llc/nixpkgs#38); a bare `builtins.path` passes
+`nix build` but fails `nix flake check` (see amarbel-llc/nixpkgs#44).
+The `runCommand`-wrapped derivation passes both, so producers can
+write `packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };`
+verbatim.
 
 ### Default keep-set
 
@@ -398,16 +407,15 @@ extras = [ "^doc/.*" "^VERSION$" ".*\\.tmpl$" ];
 ### Store-path naming
 
 `goSourceFilter` MUST preserve `src.name`. The resulting store path is
-named identically to the input `src` (`builtins.path`'s default
-behavior when `name` mirrors `src.name`). Producers that want a more
-diagnostic name (e.g. `${src.name}-go-source`) MAY rebuild the path
-with a different `name`:
+named identically to the input `src`. Producers that want a more
+diagnostic name (e.g. `${src.name}-go-source`) MAY rewrap the result
+with another `runCommand` so the renamed output is also a derivation
+(and thus passes `nix flake check`):
 
 ```nix
-builtins.path {
-  name = "${src.name}-go-source";
-  path = pkgs.goSourceFilter { inherit src; };
-}
+pkgs.runCommand "${src.name}-go-source" { } ''
+  cp -r ${pkgs.goSourceFilter { inherit src; }} $out
+''
 ```
 
 ### `goSourceFilterMiddleware`
