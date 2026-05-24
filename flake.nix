@@ -4,12 +4,24 @@
   inputs = {
     nixpkgs-master.url = "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb";
 
+    # Declared at top level only so bun2nix's transitive copies can
+    # follow these and collapse to single nodes in downstream locks.
+    # Not consumed by this flake's outputs.
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs-master";
+    systems.url = "github:nix-systems/default";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs-master";
+
     # bun2nix — only needed for its CLI binary, which the bun2nix-lint
     # stack regen / drift-guard plumbing wraps. The Nix library
     # functions and the cacheEntryCreator Zig binary live under
     # pkgs/build-support/bun2nix/ in-tree.
     bun2nix.url = "github:nix-community/bun2nix";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs-master";
+    bun2nix.inputs.flake-parts.follows = "flake-parts";
+    bun2nix.inputs.systems.follows = "systems";
+    bun2nix.inputs.treefmt-nix.follows = "treefmt-nix";
 
     # batman — bats wrapper with bundled support libraries, consumed by
     # the bun-dev devShell. Does NOT follow nixpkgs-master: nokogiri
@@ -19,7 +31,7 @@
   };
 
   outputs =
-    { self, nixpkgs-master, bun2nix, bats }:
+    { self, nixpkgs-master, bun2nix, bats, ... }:
     let
       systems = [
         "x86_64-linux"
