@@ -1,6 +1,9 @@
 # Source-tree filter for the go-pkgs producer convention (RFC 0001).
-# Returns a cleanSourceWith-filtered view of `src` that keeps only
-# Go-relevant files plus caller-supplied `extras` regex patterns.
+# Returns a cleanSourceWith-filtered view of `src` that keeps Go-relevant
+# regular files (matched against the default keep-set or caller-supplied
+# `extras` regex patterns). Directories are always traversed so the filter
+# composes on deep trees; empty directories that have no matching
+# descendants are preserved in the output (harmless for `go build`).
 #
 # Patterns are POSIX extended regex (builtins.match semantics), NOT
 # globs. Examples: "^doc/.*" "^VERSION$" ".*\\.tmpl$".
@@ -29,8 +32,7 @@ let
     }:
     let
       regexes = defaultRegexes ++ extras;
-      isFiltered = src ? _isLibCleanSourceWith;
-      origSrc = if isFiltered then src.origSrc else src;
+      origSrc = if src ? origSrc then src.origSrc else src;
     in
     lib.cleanSourceWith {
       inherit src;

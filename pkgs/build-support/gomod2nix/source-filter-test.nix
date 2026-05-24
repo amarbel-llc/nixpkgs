@@ -30,6 +30,9 @@ let
     if builtins.pathExists "${withExtras}/doc"
     then builtins.attrNames (builtins.readDir "${withExtras}/doc")
     else [];
+
+  middlewareResult = pkgs.goSourceFilterMiddleware fixture;
+  middlewareFiles = builtins.attrNames (builtins.readDir middlewareResult);
 in
 pkgs.runCommand "go-source-filter-tests"
   {
@@ -43,6 +46,10 @@ pkgs.runCommand "go-source-filter-tests"
         (builtins.elem "main.go" basicCmdFiles))
       (assert' "extras: keeps VERSION" (builtins.elem "VERSION" withExtrasFiles))
       (assert' "extras: keeps doc/intro.md" (builtins.elem "intro.md" withExtrasDocFiles))
+      (assert' "basic: doc/ dir is kept even with no extras matching its contents"
+        (builtins.elem "doc" basicFiles))
+      (assert' "middleware: behaves identically to goSourceFilter with no extras"
+        (middlewareFiles == basicFiles))
     ];
   }
   "touch $out"
