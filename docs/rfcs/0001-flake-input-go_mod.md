@@ -342,10 +342,11 @@ Arguments:
 - `extras` — OPTIONAL. A list of POSIX extended-regex strings (default:
   empty) that augment the default keep-set.
 
-`goSourceFilter` MUST be implemented in terms of
-`lib.sources.sourceByRegex`, the existing nixpkgs stdlib primitive in
-`lib/sources.nix`. The output MUST be a `cleanSourceWith`-filtered
-view of `src`.
+`goSourceFilter` MUST be implemented as a `lib.cleanSourceWith` filter
+(the underlying primitive `lib.sources.sourceByRegex` builds on top of)
+where directories are always traversed and regex patterns are matched
+against the source-tree-relative path of each regular file. The output
+MUST be a `cleanSourceWith`-filtered view of `src`.
 
 ### Default keep-set
 
@@ -364,7 +365,7 @@ All other files MUST be dropped unless matched by an entry in
 
 `extras` entries MUST be POSIX extended-regex strings, matched against
 the source-tree-relative path of each file (consistent with
-`builtins.match` and `lib.sources.sourceByRegex` semantics). They are
+`builtins.match` semantics). They are
 NOT glob patterns; the nixpkgs stdlib does not ship glob matching, and
 `goSourceFilter` does not introduce a new syntax on top.
 
@@ -698,19 +699,26 @@ relevant issue.
   `src` as a single tree. Multi-module repos with separate Go modules
   in different subdirectories need per-module filter invocations.
 
+- **Empty directories preserved.** Because the filter unconditionally
+  allows directory traversal, empty directories that have no
+  matching descendants are kept in the output store path. This is
+  harmless for `go build` but may slightly increase the output NAR
+  size compared to a strict "drop everything unmatched" interpretation.
+  *(deferred: tracked as an open question for the first downstream
+  adopter to surface as load-bearing or not.)*
+
 ## Open questions
 
 The following items are unresolved at RFC-publication time. Each will
 be revisited as the protocol promotes through `proposed → experimental
 → testing`.
 
-1. **Lazy-trees interaction.** Theory: `lib.sources.sourceByRegex`
-   and `cleanSourceWith` only import matching files into the store,
-   so the filter benefit composes with Nix's existing source-import
-   laziness. The interaction with Nix's experimental `lazy-trees`
-   feature (Git-input lazy materialization) is unverified. This RFC
-   does not assert behavior; verification is required before
-   `experimental → testing` promotion.
+1. **Lazy-trees interaction.** Theory: `lib.sources.cleanSourceWith`
+   only imports matching files into the store, so the filter benefit
+   composes with Nix's existing source-import laziness. The interaction
+   with Nix's experimental `lazy-trees` feature (Git-input lazy
+   materialization) is unverified. This RFC does not assert behavior;
+   verification is required before `experimental → testing` promotion.
 
 2. **`mkGoEnv` parity for `goSourceFilter`.** The filter must apply
    identically to `mkGoEnv` calls so devshell module-graph matches
