@@ -12,9 +12,9 @@ promotion-criteria: |
   outputs (`go-pkgs` for prod, `go-pkgs-test` for test-running).
 
   experimental → testing: lazy-trees interaction and mkGoEnv parity for
-  the filtered outputs are empirically verified; `pkgs.mkGoPkgs` lands
-  in the overlay as the canonical implementation of the inline
-  contract.
+  the filtered outputs are empirically verified; `pkgs.mkGoPkgs` is
+  exported from the overlay as the canonical implementation of the
+  inline contract (landed via madder#212's adopter validation).
 
   testing → accepted: at least two producers carry the dual outputs
   for a release cycle without reverting to single-output or bare-`self`
@@ -295,16 +295,18 @@ mkGoPkgs = {
 }
 ```
 
-> **Implementation status:** this RFC specifies the `mkGoPkgs`
-> interface; the implementation is deferred to a follow-up change.
-> [madder#212](https://github.com/amarbel-llc/madder/issues/212) ships
-> the **inline contract test**: an open-coded equivalent of
-> `mkGoPkgs` inside madder's `flake.nix` that produces the same two
-> outputs. Once `mkGoPkgs` lands in the overlay, madder's flake
-> collapses to the helper call. Producers adopting before then may
-> open-code the split (see § *Producers without middleware*); the
-> dual-output contract is the normative requirement, the helper is
-> the convenience entry point.
+> **Implementation status:** `pkgs.mkGoPkgs` is implemented and
+> exported from the fork's overlay
+> (`pkgs/build-support/gomod2nix/mk-go-pkgs.nix`).
+> [madder#212](https://github.com/amarbel-llc/madder/issues/212)
+> shipped the **inline contract test** — an open-coded equivalent of
+> the helper inside madder's `flake.nix` that produces the same two
+> outputs and self-consumes them through `buildGoApplication`'s
+> `checkPhase`. Madder's adopter report (comments on
+> [nixpkgs#46](https://github.com/amarbel-llc/nixpkgs/issues/46))
+> de-risked the helper's design before extraction. Madder's flake
+> will collapse to the helper call as the in-tree implementation
+> propagates.
 
 Arguments:
 
@@ -360,40 +362,44 @@ packages.${system} = {
 };
 ```
 
-Until `mkGoPkgs` lands in the overlay (see *Implementation status*
-above), producers MAY open-code the equivalent split. The dual-output
-contract is what's normative; the helper is the convenience entry
-point. An open-coded form using `goSourceFilter` looks like:
+### Self-consumption SHOULD
+
+A producer SHOULD point its own `buildGoApplication` `src` (and
+`pwd`) at its published `go-pkgs-test` output:
 
 ```nix
 let
-  goPkgs = pkgs.goSourceFilter {
-    src = self;
-    extras = [ ];               # prod extras, if any
-    excludes = [                # extras the protocol drops from prod
-      "_test\\.go$"
-      "(^|/)testdata/.*"
-    ];
-  };
-  goPkgsTest = pkgs.goSourceFilter {
-    src = self;
-    extras = [ ];               # implicitly union with the test surface
-  };
+  goPkgs = pkgs.mkGoPkgs { src = self; };
 in {
-  packages.${system}.go-pkgs = goPkgs;
-  packages.${system}.go-pkgs-test = goPkgsTest;
+  packages.${system} = {
+    inherit (goPkgs) go-pkgs go-pkgs-test;
+    default = pkgs.buildGoApplication {
+      pname = "my-app";
+      src = goPkgs.go-pkgs-test;
+      pwd = goPkgs.go-pkgs-test;
+      modules = ./gomod2nix.toml;
+      # checkPhase runs `go test ./...` against the filtered tree;
+      # this is the contract test that catches publish-but-broken
+      # cases for the producer's own consumers.
+    };
+  };
 }
 ```
 
-> **Note:** `goSourceFilter` as currently shipped does not have an
-> `excludes` argument; the open-coded form above is illustrative only
-> and shows the predicate shape `mkGoPkgs` encapsulates. Until the
-> helper lands, producers SHOULD either (a) defer adoption of the
-> `-test` variant (publishing only `go-pkgs` against the current
-> `goSourceFilter` keep-set, accepting that downstream test-running
-> consumers cannot bridge against this producer), or (b) inline the
-> two `builtins.path`/`runCommand` invocations directly per the
-> sketch in amarbel-llc/nixpkgs#46.
+This makes the producer's own `checkPhase` the contract test for the
+two outputs. A producer that does not self-consume can publish a
+`go-pkgs-test` that subtly fails downstream (missing a fixture, an
+embed asset, a workspace file) and never notice. Self-consumption
+turns "the published tree is valid" from a documentation claim into a
+build invariant. See madder#212 for the originating adopter
+experience.
+
+The `modules` argument is a producer-discretion call: pointing at
+`./gomod2nix.toml` (worktree-relative) evaluates faster at
+flake-eval time; pointing at `"${goPkgs.go-pkgs-test}/gomod2nix.toml"`
+(filtered-tree-relative) is a stronger contract because drift
+between the worktree's lockfile and the filter's view becomes
+structurally impossible. Producers MAY pick either.
 
 Other forms that producers may be tempted to use for the prod output
 have hidden gotchas:
@@ -859,10 +865,11 @@ be revisited as the protocol promotes through `proposed → experimental
    materialization) is unverified. This RFC does not assert behavior;
    verification is required before `experimental → testing` promotion.
 
-2. **`mkGoEnv` parity for `goSourceFilter`.** The filter must apply
-   identically to `mkGoEnv` calls so devshell module-graph matches
-   build-time module-graph. Empirical verification is deferred until
-   `mkGoPkgs` lands and the first producer adopts the filter.
+2. **`mkGoEnv` parity for `goSourceFilter` / `mkGoPkgs`.** The filter
+   must apply identically to `mkGoEnv` calls so devshell module-graph
+   matches build-time module-graph. Madder's adopter validation
+   exercises the build side but not the devshell side; empirical
+   verification on `mkGoEnv` is still pending as producers propagate.
 
 3. **Store-path name preservation.** Documented behavior is "preserve
    `src.name`". Whether downstream adopters would prefer

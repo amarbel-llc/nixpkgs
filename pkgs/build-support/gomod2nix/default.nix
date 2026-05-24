@@ -87,6 +87,9 @@ let
   sourceFilter = import ./source-filter.nix { inherit lib runCommand; };
   inherit (sourceFilter) goSourceFilter goSourceFilterMiddleware;
 
+  goPkgsHelper = import ./mk-go-pkgs.nix { inherit lib runCommand; };
+  inherit (goPkgsHelper) mkGoPkgs;
+
   # Internal only build-time attributes
   internal =
     let
@@ -931,6 +934,7 @@ in
     mkGoCacheEnv
     goSourceFilter
     goSourceFilterMiddleware
+    mkGoPkgs
     hooks
     ;
 }
