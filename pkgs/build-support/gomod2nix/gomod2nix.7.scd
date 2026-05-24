@@ -126,6 +126,42 @@ devShells.default = pkgs-master.mkShell {
 };
 ```
 
+# PWD AND SRC RESOLUTION
+
+*buildGoApplication* and *mkGoEnv* both anchor on a *pwd* — the directory
+containing *go.mod* (or *go.work*) and *gomod2nix.toml*. Resolution:
+
+. *pwd* given explicitly → used as-is
+. *pwd* omitted, *src* given → *pwd* defaults to *src*
+  (the single-module case where the Go module lives at the source root)
+. *pwd* omitted and *src* omitted → eval-time *throw*
+
+The resolved *pwd* is then validated: if it does not contain a *go.mod*
+or *go.work*, *buildGoApplication* / *mkGoEnv* throw at eval time. This
+catches the polyglot footgun where a flake passes *src = self* for a
+repo whose Go module lives in *./go* — without validation, the failure
+surfaces deep inside *mkVendorEnv* with an opaque
+*"go.mod: file not found"*.
+
+```
+# Single-module: pwd defaults to src
+buildGoApplication {
+  src = self;
+  ...
+};
+
+# Polyglot: pwd must point at the Go subdir
+buildGoApplication {
+  src = self;
+  pwd = self + "/go";
+  ...
+};
+```
+
+When publishing through *mkGoPkgs* (RFC 0001), the *go-pkgs* /
+*go-pkgs-test* outputs are themselves *pwd*-shaped — point both *src*
+and *pwd* at the output for the self-consumption contract.
+
 # GO VERSION SELECTION
 
 *buildGoApplication* selects the Go toolchain in this order:

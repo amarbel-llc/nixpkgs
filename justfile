@@ -114,6 +114,15 @@ build-changed:
 build pkg:
     NIXPKGS_ALLOW_UNFREE=1 nix build --impure --no-link --print-out-paths "path:.#{{ pkg }}"
 
+# [test] Run an eval-time test fixture (nix-build a standalone .nix file).
+# Used for the gomod2nix internals tests that aren't wired as flake outputs:
+#   just nix-build-test pkgs/build-support/gomod2nix/mk-go-pkgs-test.nix
+#   just nix-build-test pkgs/build-support/gomod2nix/pwd-validation-test.nix
+#   just nix-build-test pkgs/build-support/gomod2nix/internals-merge-test.nix
+[group: 'test']
+nix-build-test path:
+    NIXPKGS_ALLOW_UNFREE=1 nix-build --no-out-link "{{ path }}"
+
 # [explore] Test the overlay-flake migration against amarbel-llc/maneater
 # Clones into .tmp/maneater (or reuses), bumps the nixpkgs input, runs
 # nix flake check + nix build .#default.

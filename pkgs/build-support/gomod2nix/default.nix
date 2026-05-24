@@ -90,6 +90,50 @@ let
   goPkgsHelper = import ./mk-go-pkgs.nix { inherit lib runCommand; };
   inherit (goPkgsHelper) mkGoPkgs;
 
+  # Resolve a caller-supplied (pwd, src) pair into an effective pwd, with
+  # eval-time validation. Both `mkGoEnv` and `buildGoApplication` route
+  # through this so the polyglot footgun (calling with `src = self` for a
+  # repo whose Go module lives in `/go`) fails loudly instead of crashing
+  # downstream with an opaque "go.mod: file not found" or vendor-env
+  # symlink error.
+  #
+  # Resolution rules:
+  #   - pwd given  → use it
+  #   - pwd null but src given → pwd defaults to src (single-module case)
+  #   - both null  → throw
+  #   - effective pwd lacks go.mod AND go.work → throw (polyglot footgun)
+  resolvePwd =
+    { caller, pwd, src }:
+    let
+      p =
+        if pwd != null then
+          pwd
+        else if src != null then
+          src
+        else
+          throw ''
+            ${caller}: `pwd` is required. Either pass `pwd` explicitly,
+            or set `src` (in which case `pwd` defaults to `src`). `pwd`
+            MUST be a directory containing go.mod or go.work.
+          '';
+      hasGoMod = pathExists "${toString p}/go.mod";
+      hasGoWork = pathExists "${toString p}/go.work";
+    in
+    if hasGoMod || hasGoWork then
+      p
+    else
+      throw ''
+        ${caller}: pwd = ${toString p}
+        MUST contain go.mod or go.work, but neither was found.
+
+        Polyglot repos with Go in a subdirectory need an explicit pwd:
+
+          pwd = <src>/<subdir>;   # e.g. self + "/go"
+
+        And the subdirectory's go.mod/go.sum/gomod2nix.toml MUST be in
+        the filtered source tree (see goSourceFilter / mkGoPkgs).
+      '';
+
   # Internal only build-time attributes
   internal =
     let
@@ -440,28 +484,36 @@ let
 
   mkGoEnv =
     {
-      pwd,
-      toolsGo ? pwd + "/tools.go",
-      modules ? pwd + "/gomod2nix.toml",
+      pwd ? null,
+      src ? null,
+      toolsGo ? null,
+      modules ? null,
       goFlakeInputs ? { },
       allowGoReference ? false,
       ...
     }@attrs:
     let
+      effectivePwd = resolvePwd {
+        caller = "mkGoEnv";
+        inherit pwd src;
+      };
+      effectiveToolsGo = if toolsGo != null then toolsGo else effectivePwd + "/tools.go";
+      effectiveModules = if modules != null then modules else effectivePwd + "/gomod2nix.toml";
+
       # Pick the Go toolchain off the consumer's organic go.mod (the
       # synthetic require/replace lines from goFlakeInputs don't change
       # the Go version requirement). This matches buildGoApplication's
       # chicken-and-egg handling of selectGo vs. mkMergedGoMod.
-      consumerGoModForVersion = parseGoMod (readFile "${toString pwd}/go.mod");
+      consumerGoModForVersion = parseGoMod (readFile "${toString effectivePwd}/go.mod");
       go = selectGo attrs consumerGoModForVersion;
 
       # Mirror buildGoApplication's merge: when goFlakeInputs is empty
       # this returns the consumer's organic go.mod and gomod2nix.toml
       # verbatim, preserving the pre-goFlakeInputs behaviour byte-for-byte.
       merged = mkMergedView {
+        pwd = effectivePwd;
+        modules = effectiveModules;
         inherit
-          pwd
-          modules
           goFlakeInputs
           go
           runCommand
@@ -475,8 +527,8 @@ let
           go
           goMod
           modulesStruct
-          pwd
           ;
+        pwd = effectivePwd;
       };
 
       goSyncWrapper = writeScript "go" ''
@@ -498,6 +550,9 @@ let
     stdenv.mkDerivation (
       removeAttrs attrs [
         "pwd"
+        "src"
+        "toolsGo"
+        "modules"
         "goFlakeInputs"
         "allowGoReference"
       ]
@@ -533,13 +588,13 @@ let
           install -m755 ${goSyncWrapper} $out/bin/go
 
         ''
-        + optionalString (pathExists toolsGo) ''
+        + optionalString (pathExists effectiveToolsGo) ''
           mkdir source
           cp ${
-            if mergedGoModFile != null then mergedGoModFile else pwd + "/go.mod"
+            if mergedGoModFile != null then mergedGoModFile else effectivePwd + "/go.mod"
           } source/go.mod
-          cp ${pwd + "/go.sum"} source/go.sum
-          cp ${toolsGo} source/tools.go
+          cp ${effectivePwd + "/go.sum"} source/go.sum
+          cp ${effectiveToolsGo} source/tools.go
           cd source
 
           rsync -a -K --ignore-errors ${vendorEnv}/ vendor
@@ -565,8 +620,8 @@ let
 
   buildGoApplication =
     {
-      modules ? pwd + "/gomod2nix.toml",
-      src ? pwd,
+      modules ? null,
+      src ? null,
       pwd ? null,
       goFlakeInputs ? { },
       nativeBuildInputs ? [ ],
@@ -576,9 +631,9 @@ let
       tags ? [ ],
       ldflags ? [ ],
       commit ?
-        if src ? rev then
+        if src != null && src ? rev then
           src.rev
-        else if src ? shortRev then
+        else if src != null && src ? shortRev then
           src.shortRev
         else
           "unknown",
@@ -587,16 +642,23 @@ let
       ...
     }@attrs:
     let
+      effectivePwd = resolvePwd {
+        caller = "buildGoApplication";
+        inherit pwd src;
+      };
+      effectiveSrc = if src != null then src else effectivePwd;
+      effectiveModules = if modules != null then modules else effectivePwd + "/gomod2nix.toml";
+
       # Detect workspace: check for go.work at pwd
-      goWorkPath = "${toString pwd}/go.work";
-      hasWorkspace = pwd != null && pathExists goWorkPath;
+      goWorkPath = "${toString effectivePwd}/go.work";
+      hasWorkspace = pathExists goWorkPath;
       goWork = if hasWorkspace then parseGoWork (readFile goWorkPath) else null;
 
       # Parse the consumer's organic go.mod (no goFlakeInputs synthesis yet).
       # We need this first to select Go (chicken-and-egg: mkMergedGoMod needs go).
-      goModPath = "${toString pwd}/go.mod";
+      goModPath = "${toString effectivePwd}/go.mod";
       consumerGoMod =
-        if pwd != null && pathExists goModPath then parseGoMod (readFile goModPath) else null;
+        if pathExists goModPath then parseGoMod (readFile goModPath) else null;
 
       # For Go version selection, prefer consumer go.mod, fall back to go.work.
       # Synthetic require/replace lines from goFlakeInputs don't change the Go
@@ -617,9 +679,9 @@ let
       # Compute the merged view (consumer + goFlakeInputs). Returns the
       # consumer's data verbatim when goFlakeInputs is empty.
       merged = mkMergedView {
+        pwd = effectivePwd;
+        modules = effectiveModules;
         inherit
-          pwd
-          modules
           goFlakeInputs
           go
           runCommand
@@ -638,8 +700,8 @@ let
               go
               goWork
               modulesStruct
-              pwd
               ;
+            pwd = effectivePwd;
             goMod = if goMod != null then goMod else { replace = { }; };
           }
         else
@@ -652,21 +714,21 @@ let
         if defaultPackage != "" then
           vendorEnv.passthru.sources.${defaultPackage}
         else if goMod != null then
-          pwd
+          effectivePwd
         else
-          src;
+          effectiveSrc;
 
       depFilesPath =
         if (!disableGoCache && modulesStruct != { } && depFilesSrc != null) then
           if hasWorkspace then
             # For workspaces, include go.work and all module go.mod/go.sum files
             lib.cleanSourceWith {
-              src = pwd;
+              src = effectivePwd;
               filter =
                 path: type:
                 let
                   baseName = baseNameOf path;
-                  relPath = removePrefix ((toString pwd) + "/") (toString path);
+                  relPath = removePrefix ((toString effectivePwd) + "/") (toString path);
                 in
                 baseName == "go.work"
                 || baseName == "go.mod"
@@ -813,7 +875,7 @@ let
             in
             writeScript "${pname}-updater" ''
               #!${runtimeShell}
-              ${optionalString (pwd != null) "cd ${toString pwd}"}
+              cd ${toString effectivePwd}
               exec ${gomod2nix}/bin/gomod2nix generate ${generatorArgs}
             '';
 
