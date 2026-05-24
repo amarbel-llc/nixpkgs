@@ -343,10 +343,11 @@ Arguments:
   empty) that augment the default keep-set.
 
 `goSourceFilter` MUST be implemented as a `lib.cleanSourceWith` filter
-(the underlying primitive `lib.sources.sourceByRegex` builds on top of)
-where directories are always traversed and regex patterns are matched
-against the source-tree-relative path of each regular file. The output
-MUST be a `cleanSourceWith`-filtered view of `src`.
+(the lower-level primitive that `lib.sources.sourceByRegex` itself
+builds on top of) where directories are always traversed and regex
+patterns are matched against the source-tree-relative path of each
+regular file. The output MUST be a `cleanSourceWith`-filtered view of
+`src`.
 
 ### Default keep-set
 
