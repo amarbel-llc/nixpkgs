@@ -17,7 +17,7 @@
 }@args:
 let
   flakeLock = builtins.fromJSON (builtins.readFile ./flake.lock);
-  nixpkgsLock = flakeLock.nodes.nixpkgs.locked;
+  nixpkgsLock = flakeLock.nodes."nixpkgs-master".locked;
   nixpkgsSrc = builtins.fetchTree {
     type = "github";
     owner = nixpkgsLock.owner;
