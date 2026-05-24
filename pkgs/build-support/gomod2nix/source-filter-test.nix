@@ -12,6 +12,15 @@ let
     # producers. See amarbel-llc/nixpkgs#45.
     echo "go 1.26" > $out/go.work
     touch $out/go.work.sum
+    # Sub-module under a go.work `use ./libs/dewey` directive. The
+    # default regexes for go.mod / go.sum / gomod2nix.toml MUST match
+    # by basename so child modules survive the filter. See
+    # amarbel-llc/nixpkgs#48.
+    mkdir -p $out/libs/dewey
+    echo "module example.com/x/libs/dewey" > $out/libs/dewey/go.mod
+    touch $out/libs/dewey/go.sum
+    touch $out/libs/dewey/gomod2nix.toml
+    echo "package dewey" > $out/libs/dewey/dewey.go
     echo "# README" > $out/README.md
     mkdir -p $out/doc
     echo "doc" > $out/doc/intro.md
@@ -47,6 +56,13 @@ pkgs.runCommand "go-source-filter-tests"
       # amarbel-llc/nixpkgs#45: go.work + go.work.sum in defaults
       (assert' "basic: keeps go.work (#45)" (builtins.elem "go.work" basicFiles))
       (assert' "basic: keeps go.work.sum (#45)" (builtins.elem "go.work.sum" basicFiles))
+      # amarbel-llc/nixpkgs#48: sub-module module files matched by basename
+      (assert' "basic: keeps libs/dewey/go.mod (#48)"
+        (builtins.pathExists "${basic}/libs/dewey/go.mod"))
+      (assert' "basic: keeps libs/dewey/go.sum (#48)"
+        (builtins.pathExists "${basic}/libs/dewey/go.sum"))
+      (assert' "basic: keeps libs/dewey/gomod2nix.toml (#48)"
+        (builtins.pathExists "${basic}/libs/dewey/gomod2nix.toml"))
       (assert' "basic: drops README.md" (! (builtins.elem "README.md" basicFiles)))
       (assert' "basic: drops VERSION" (! (builtins.elem "VERSION" basicFiles)))
       (assert' "basic: keeps cmd/example/main.go"

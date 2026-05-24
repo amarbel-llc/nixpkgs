@@ -29,12 +29,12 @@ plus the canonical workspace files, plus the *gomod2nix.toml*
 lockfile:
 
 - *\*.go* — any Go source file
-- *go.mod*
-- *go.sum*
-- *go.work* — workspace manifest (single-module producers don't
-  ship this; the regex matches nothing in that case)
-- *go.work.sum* — workspace checksum file
-- *gomod2nix.toml*
+- *go.mod* / *go.sum* / *gomod2nix.toml* — matched by basename
+  anywhere in the tree, so go.work-based workspaces' child module
+  files (e.g. *libs/dewey/go.mod*) survive the filter
+- *go.work* / *go.work.sum* — root-only (these only ever live at the
+  workspace root; single-module producers don't ship these — the
+  regexes match nothing in that case)
 
 All other files are dropped. The *extras* argument adds additional
 patterns; see *EXTRAS* below.

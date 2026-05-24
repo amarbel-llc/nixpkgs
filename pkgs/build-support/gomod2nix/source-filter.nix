@@ -40,17 +40,22 @@
 let
   defaultRegexes = [
     ".*\\.go$"
-    "^go\\.mod$"
-    "^go\\.sum$"
+    # go.mod / go.sum / gomod2nix.toml: matched by basename anywhere
+    # in the tree, so go.work-based workspaces' child module files
+    # (e.g. libs/dewey/go.mod) are kept alongside the root. See
+    # amarbel-llc/nixpkgs#48 for the workspace failure mode under
+    # the prior root-anchored regexes. `builtins.match` is anchored
+    # at both ends, so `(.*/)?` covers both root and nested cases.
+    "(.*/)?go\\.mod$"
+    "(.*/)?go\\.sum$"
+    "(.*/)?gomod2nix\\.toml$"
     # go.work and go.work.sum are load-bearing for go.work-based
-    # multi-module workspaces. Without them, `go build` against the
-    # filtered tree falls back to single-module mode and fails to
-    # resolve cross-module imports. Single-module producers are
-    # unaffected — these regexes match nothing in trees that have no
-    # go.work file. See amarbel-llc/nixpkgs#45.
+    # multi-module workspaces. They only ever live at the workspace
+    # root by Go's design, so keep them root-anchored. Single-module
+    # producers are unaffected — these regexes match nothing in trees
+    # that have no go.work file. See amarbel-llc/nixpkgs#45.
     "^go\\.work$"
     "^go\\.work\\.sum$"
-    "^gomod2nix\\.toml$"
   ];
 
   goSourceFilter =
