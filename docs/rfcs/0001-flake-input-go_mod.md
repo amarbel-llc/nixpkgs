@@ -2,19 +2,23 @@
 status: draft
 date: 2026-05-23
 promotion-criteria: |
-  draft → proposed: at least one producer in this fork adopts `pkgs.goSourceFilter`
-  for its `packages.${system}.go-pkgs` flake output; FDR-0003 and FDR-0004 are
-  thinned to reference this RFC for normative spec.
+  draft → proposed: at least one producer in this fork publishes the
+  dual outputs (`packages.${system}.go-pkgs` and
+  `packages.${system}.go-pkgs-test`) per § *Producer interface*; FDR-0003
+  and FDR-0004 are thinned to reference this RFC for normative spec.
 
-  proposed → experimental: tommy (or another producer) publishes
-  `packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; }` and a
-  consumer (madder) builds successfully against the filtered output.
+  proposed → experimental: madder ships the inline-`mkGoPkgs` contract
+  test (madder#212) and a consumer builds successfully against both
+  outputs (`go-pkgs` for prod, `go-pkgs-test` for test-running).
 
-  experimental → testing: lazy-trees interaction and mkGoEnv parity for the
-  filter are empirically verified.
+  experimental → testing: lazy-trees interaction and mkGoEnv parity for
+  the filtered outputs are empirically verified; `pkgs.mkGoPkgs` lands
+  in the overlay as the canonical implementation of the inline
+  contract.
 
-  testing → accepted: at least two producers carry filtered `go-pkgs` for a
-  release cycle without reverting to bare `self`.
+  testing → accepted: at least two producers carry the dual outputs
+  for a release cycle without reverting to single-output or bare-`self`
+  forms.
 ---
 
 # RFC 0001 — flake-input-go_mod protocol
@@ -31,23 +35,26 @@ they appear in all capitals.
 The flake-input-go_mod protocol specifies a Nix mechanism for
 cross-flake Go module composition. It has two halves that compose
 end-to-end: a consumer half (`goFlakeInputs`, an argument to
-`buildGoApplication` and `mkGoEnv`) and a producer half
-(`packages.${system}.go-pkgs`, a conventional flake output, optionally
-constructed via `mkGoPkgs`). The protocol replaces the three-place
-lockstep — `go.mod` pseudo-version, `gomod2nix.toml` NAR hash, and
-`flake.lock` rev — with a single source of truth: the flake input's
-rev as recorded in `flake.lock`. The consumer's merged `go.mod`
-synthesizes the appropriate `replace` directive at eval time; the
-producer publishes a stable, optionally-filtered source tree at the
-conventional attribute.
+`buildGoApplication` and `mkGoEnv`) and a producer half (a pair of
+flake outputs, `packages.${system}.go-pkgs` for downstream prod
+consumption and `packages.${system}.go-pkgs-test` for self-consumption
+and test-running consumers, both optionally constructed via
+`mkGoPkgs`). The protocol replaces the three-place lockstep —
+`go.mod` pseudo-version, `gomod2nix.toml` NAR hash, and `flake.lock`
+rev — with a single source of truth: the flake input's rev as
+recorded in `flake.lock`. The consumer's merged `go.mod` synthesizes
+the appropriate `replace` directive at eval time; the producer
+publishes stable, filtered source trees at the conventional
+attributes.
 
 ## Terminology
 
 For the purposes of this RFC:
 
 - **Producer** — a flake whose output is a Go source tree intended for
-  consumption by other flakes. A producer MUST expose its canonical Go
-  source tree as `packages.${system}.go-pkgs`.
+  consumption by other flakes. A producer MUST expose both
+  `packages.${system}.go-pkgs` (prod shape) and
+  `packages.${system}.go-pkgs-test` (test superset).
 - **Consumer** — a flake that depends on one or more producers' Go
   source trees through Nix flake inputs. A consumer MUST declare those
   dependencies through `goFlakeInputs`.
@@ -56,16 +63,20 @@ For the purposes of this RFC:
   `goFlakeInputs`. The bridge implementation lives in this fork's
   `buildGoApplication` and `mkGoEnv`.
 - **Middleware** — a function `src -> src` (derivation to derivation)
-  that transforms a Go source tree. Middlewares compose left-to-right
-  in the `mkGoPkgs.middlewares` pipeline. Examples include source
-  filters, codegen passes, and format normalizers.
+  that transforms a Go source tree. The middleware-aware producer-side
+  helper is deferred to a future revision; see § *Producers with
+  codegen (deferred)*.
 - **`goFlakeInputs`** — the consumer-side bridge argument. An attrset
   mapping Go module paths to flake-input derivations (or `{ src;
   subPath; }` records). Specified normatively in §
   *Consumer interface: `goFlakeInputs`*.
 - **`go-pkgs`** — the conventional flake output attribute name for a
-  producer's Go source tree. Specified normatively in §
-  *Producer interface: `packages.${system}.go-pkgs` and `mkGoPkgs`*.
+  producer's Go source tree (prod shape; excludes `*_test.go` and
+  `testdata/**`). Specified normatively in
+  § *Producer interface: dual `go-pkgs` outputs and `mkGoPkgs`*.
+- **`go-pkgs-test`** — the test-superset companion of `go-pkgs`. Same
+  prod surface plus `*_test.go` and `testdata/**`. Specified
+  normatively in § *Producer interface*.
 - **`gomod.nix`** — the conventional colocation file on the consumer
   side that lifts the `goFlakeInputs` attrset out of the
   `buildGoApplication` call. Specified normatively in §
@@ -74,14 +85,15 @@ For the purposes of this RFC:
 ## Protocol overview
 
 The protocol has two complementary halves. On the producer side, a
-flake exposes its Go source tree as `packages.${system}.go-pkgs` — a
-derivation whose output is a directory containing a Go module
-(`go.mod` at the root, importable packages in subdirectories). On the
-consumer side, a flake declares which producers it depends on by
-passing `goFlakeInputs` to `buildGoApplication` and `mkGoEnv`; the
-bridge merges synthetic `replace` directives into the consumer's
-`go.mod` at Nix eval time, pointing each declared Go module path at
-the producer's `go-pkgs` store path.
+flake exposes its Go source tree as a pair of derivations — one
+prod-shape (`packages.${system}.go-pkgs`, excludes `*_test.go` and
+`testdata/**`) and one test-superset (`packages.${system}.go-pkgs-test`,
+includes both). On the consumer side, a flake declares which producers
+it depends on by passing `goFlakeInputs` to `buildGoApplication` and
+`mkGoEnv`; the bridge merges synthetic `replace` directives into the
+consumer's `go.mod` at Nix eval time, pointing each declared Go module
+path at the chosen producer output (typically `go-pkgs`; consumers
+that need to run the producer's tests bridge against `go-pkgs-test`).
 
 The protocol exists to close the lockstep-drift class. Without the
 bridge, cross-repo Go composition in this fork requires editing three
@@ -195,94 +207,196 @@ declared in `goFlakeInputs`; `go.mod` retains the `require` line
 (Go's parser needs *some* version) with a sentinel pseudo-version such
 as `v0.0.0-00010101000000-000000000000`.
 
-## Producer interface: `packages.${system}.go-pkgs` and `mkGoPkgs`
+## Producer interface: dual `go-pkgs` outputs and `mkGoPkgs`
 
 ### Flake output naming
 
-A Go-source-producing flake SHOULD expose its canonical Go source tree
-as the flake output:
+A Go-source-producing flake MUST expose **two** flake outputs that
+differ only in whether the test surface is included:
 
 ```
-packages.${system}.go-pkgs
+packages.${system}.go-pkgs       # prod shape
+packages.${system}.go-pkgs-test  # superset: prod + test surface
 ```
 
-The value MUST be a derivation (or path coercible to one) whose output
-is a directory containing a Go module: a `go.mod` at the root (or at
-a subdirectory addressable via the consumer's `subPath`) and the
-importable packages of that module.
+- `go-pkgs` MUST contain `*.go` (excluding `*_test.go`), `go.mod`,
+  `go.sum`, and `gomod2nix.toml`. It MUST NOT contain `*_test.go`
+  files or `testdata/**` directories. This is the "prod shape" that
+  downstream consumers bridge against when they only compile non-test
+  code.
+- `go-pkgs-test` MUST be the **superset** of `go-pkgs`: same prod
+  surface, plus `*_test.go`, plus `testdata/**`. This is the shape
+  that supports running the producer's tests against the bridged
+  tree — including self-consumption, where the producer's own
+  `checkPhase` evaluates `go test ./...` against the published source.
 
-Consumers reference this attribute by name when wiring `goFlakeInputs`:
+Both values MUST be derivations (or paths coercible to one) whose
+output is a directory containing a Go module: `go.mod` at the root
+(or at a subdirectory addressable via the consumer's `subPath`) and
+the importable packages of that module.
+
+Consumers reference the appropriate variant when wiring
+`goFlakeInputs`:
 
 ```nix
 goFlakeInputs = {
+  # prod consumer — most callers
   "github.com/amarbel-llc/purse-first" =
     inputs.purse-first.packages.${system}.go-pkgs;
+
+  # test-runner consumer — wants the producer's tests too
+  "github.com/amarbel-llc/tap/go" = {
+    src = inputs.tap.packages.${system}.go-pkgs-test;
+    subPath = "go";
+  };
 };
 ```
 
+Downstream consumers SHOULD bridge against `go-pkgs` by default. They
+MUST bridge against `go-pkgs-test` only when they need the producer's
+test files materialized inside the bridged source tree (e.g. to run
+`go test` against the producer's package, or because the consumer
+needs a fixture under `testdata/`).
+
 A producer MAY expose additional Go output variants under other
-attribute names (e.g. `go-pkgs-minimal`, `go-pkgs-server`). Consumers
-that need a non-default variant MUST reference it explicitly via the
-`{ src = ...; }` record form on the `goFlakeInputs` entry; the
-protocol places no constraint on those variant names and standardizes
-only the default attribute for discovery.
+attribute names (e.g. `go-pkgs-server`, `go-pkgs-cmd`). Variant names
+beyond `go-pkgs` and `go-pkgs-test` are not standardized by this
+protocol; consumers wanting them MUST reference them explicitly via
+the `{ src = ...; }` record form on the `goFlakeInputs` entry.
+
+### Why the split
+
+`go-pkgs` and `go-pkgs-test` cannot collapse to a single output
+because the two audiences have opposed requirements:
+
+- A unified-tight default (drop `*_test.go` + `testdata/**`) breaks
+  self-consumption: a producer building itself from its own
+  `go-pkgs` fails the moment `go test ./...` tries to load a fixture.
+- A unified-loose default (keep `*_test.go` + `testdata/**`) bloats
+  every downstream prod consumer's input closure with test fixtures
+  and `_test.go` files they never compile, increasing cache
+  invalidation and store-size pressure.
+
+See amarbel-llc/nixpkgs#46 for the motivating discussion.
 
 ### `mkGoPkgs` helper
 
-The fork's overlay SHOULD expose `pkgs.mkGoPkgs` as a
-middleware-aware producer-side wrapper:
+The fork's overlay SHOULD expose `pkgs.mkGoPkgs` as the canonical
+producer-side helper that emits both outputs from a single call:
 
 ```nix
 mkGoPkgs = {
   src,
-  middlewares ? [ ],
-  goFlakeInputs ? { },
-  subPath ? "",
-}: ...
+  extras ? [ ],
+  testExtras ? [ ],
+}: {
+  go-pkgs       :: Derivation;  # prod shape
+  go-pkgs-test  :: Derivation;  # superset of go-pkgs
+}
 ```
 
 > **Implementation status:** this RFC specifies the `mkGoPkgs`
-> interface; the implementation is deferred to a future change. Until
-> the helper lands in the overlay, producers MAY use
-> `pkgs.goSourceFilter` standalone (see § *Source filtering:
-> `goSourceFilter`*) as the value of `packages.${system}.go-pkgs`, or
-> set `go-pkgs = self` directly when no filtering or codegen is
-> needed.
+> interface; the implementation is deferred to a follow-up change.
+> [madder#212](https://github.com/amarbel-llc/madder/issues/212) ships
+> the **inline contract test**: an open-coded equivalent of
+> `mkGoPkgs` inside madder's `flake.nix` that produces the same two
+> outputs. Once `mkGoPkgs` lands in the overlay, madder's flake
+> collapses to the helper call. Producers adopting before then may
+> open-code the split (see § *Producers without middleware*); the
+> dual-output contract is the normative requirement, the helper is
+> the convenience entry point.
 
 Arguments:
 
 - `src` — a derivation or path containing the Go source tree.
   REQUIRED.
-- `middlewares` — a list of source transformations. Each middleware
-  MUST be a function `src -> src` (derivation to derivation). The
-  pipeline MUST be applied left-to-right as
-  `foldl' (acc: mw: mw acc) src middlewares`. When the list is empty
-  (the default), `mkGoPkgs` MUST return `src` unchanged.
-- `goFlakeInputs` — optional declaration of flake-input-driven Go
-  dependencies that the producer itself uses. When non-empty,
-  `mkGoPkgs` MUST attach the value to the result derivation as
-  `passthru.goFlakeInputs`. Downstream consumers of the resulting
-  `go-pkgs` derivation inherit those entries at depth-1 through the
-  bridge's transitive inheritance (see § *Multi-producer closures:
-  `follows` + passthru inheritance*).
-- `subPath` — optional subdirectory hint for tooling. The convention
-  itself MUST NOT slice the tree by `subPath`; consumers control
-  per-consumer slicing through the `subPath` attribute on
-  `goFlakeInputs` entries.
+- `extras` — OPTIONAL list of POSIX extended-regex strings added to
+  the keep-set of **both** outputs. Use for files relevant to both
+  prod and test builds (e.g. embedded asset directories, top-level
+  config files referenced by `//go:embed`).
+- `testExtras` — OPTIONAL list of POSIX extended-regex strings added
+  only to `go-pkgs-test`. Use for fixtures that live outside the
+  default `testdata/**` convention.
+
+Outputs:
+
+- `go-pkgs` — derivation whose tree matches `*.go` (excluding
+  `*_test.go`) plus the module files (`go.mod`, `go.sum`,
+  `gomod2nix.toml`) plus `extras`.
+- `go-pkgs-test` — derivation whose tree matches the union of the
+  `go-pkgs` keep-set, `*_test.go`, `testdata/**` (matched as
+  `^testdata/.*` and `.*/testdata/.*`), and `testExtras`.
+
+Both outputs MUST be real derivations (`lib.isDerivation` true) so
+that they satisfy `nix flake check`'s schema gate (see
+amarbel-llc/nixpkgs#44 for the gate the protocol's earlier
+single-output versions tripped on).
+
+The earlier middleware-aware variant (a `middlewares` argument that
+composed `src -> src` transformations) is deferred to a separate
+future helper (provisionally `mkGoPkgsWithMiddleware`). See
+§ *Producers with codegen (deferred)*.
+
+`mkGoPkgs` MUST NOT slice the tree by any caller-side `subPath` arg.
+The two outputs always cover the full `src` tree; consumers control
+per-consumer slicing through the `subPath` attribute on
+`goFlakeInputs` entries.
+
+`mkGoPkgs` MAY attach a `passthru.goFlakeInputs` declaration to its
+outputs in a future revision (currently deferred); see
+§ *Multi-producer closures: `follows` + passthru inheritance* for how
+transitive inheritance interacts with the producer side.
 
 ### Producers without middleware
 
-A producer that ships hand-written Go with no codegen SHOULD publish:
+A producer that ships hand-written Go with no codegen SHOULD publish
+both outputs via `mkGoPkgs`:
 
 ```nix
-packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };
+inherit (pkgs.mkGoPkgs { src = self; }) go-pkgs go-pkgs-test;
+
+packages.${system} = {
+  inherit go-pkgs go-pkgs-test;
+};
 ```
 
-`goSourceFilter` returns a real derivation (see
-§ *Source filtering: `goSourceFilter`*), which satisfies every
-flake-output gate (`nix eval`, `nix build`, and `nix flake check`).
+Until `mkGoPkgs` lands in the overlay (see *Implementation status*
+above), producers MAY open-code the equivalent split. The dual-output
+contract is what's normative; the helper is the convenience entry
+point. An open-coded form using `goSourceFilter` looks like:
 
-Other forms that producers may be tempted to use have hidden gotchas:
+```nix
+let
+  goPkgs = pkgs.goSourceFilter {
+    src = self;
+    extras = [ ];               # prod extras, if any
+    excludes = [                # extras the protocol drops from prod
+      "_test\\.go$"
+      "(^|/)testdata/.*"
+    ];
+  };
+  goPkgsTest = pkgs.goSourceFilter {
+    src = self;
+    extras = [ ];               # implicitly union with the test surface
+  };
+in {
+  packages.${system}.go-pkgs = goPkgs;
+  packages.${system}.go-pkgs-test = goPkgsTest;
+}
+```
+
+> **Note:** `goSourceFilter` as currently shipped does not have an
+> `excludes` argument; the open-coded form above is illustrative only
+> and shows the predicate shape `mkGoPkgs` encapsulates. Until the
+> helper lands, producers SHOULD either (a) defer adoption of the
+> `-test` variant (publishing only `go-pkgs` against the current
+> `goSourceFilter` keep-set, accepting that downstream test-running
+> consumers cannot bridge against this producer), or (b) inline the
+> two `builtins.path`/`runCommand` invocations directly per the
+> sketch in amarbel-llc/nixpkgs#46.
+
+Other forms that producers may be tempted to use for the prod output
+have hidden gotchas:
 
 - `packages.${system}.go-pkgs = self;` — `self` is a flake attrset.
   The flake-output schema rejects it ("expected ... a derivation or
@@ -292,36 +406,21 @@ Other forms that producers may be tempted to use have hidden gotchas:
   See amarbel-llc/nixpkgs#44.
 - `packages.${system}.go-pkgs = ./.;` — same issue as `self.outPath`.
 
-Producers that prefer an explicit no-filter, no-codegen identity MAY
-use the (deferred) `mkGoPkgs` helper once it exists:
+### Producers with codegen (deferred)
 
-```nix
-packages.${system}.go-pkgs = pkgs.mkGoPkgs { src = self; };
-```
-
-`mkGoPkgs { src = self; middlewares = [ ]; }` is the identity
-transformation. Until `mkGoPkgs` lands, use `goSourceFilter` directly.
-
-### Producers with middleware
-
-A producer that runs codegen (e.g. via the future
+A producer that runs codegen (e.g. via a future
 `pkgs.dagnabitExportMiddleware`) or otherwise transforms its source
-composes the pipeline via `mkGoPkgs`:
+through a middleware pipeline is **out of scope** for this revision
+of the protocol. The earlier middleware-aware `mkGoPkgs` interface
+moves to a separate future helper (provisionally
+`mkGoPkgsWithMiddleware`); when that helper lands it will produce the
+same dual-output shape and accept a `middlewares` list of `src -> src`
+transformations applied left-to-right via `foldl'`.
 
-```nix
-packages.${system}.go-pkgs = pkgs.mkGoPkgs {
-  src = self;
-  middlewares = [
-    pkgs.goSourceFilterMiddleware
-    pkgs.dagnabitExportMiddleware  # example future middleware
-  ];
-};
-```
-
-The middleware contract is intentionally narrow — `src -> src` — so
-the set of allowed transformations stays composable. Producers MUST
-order middlewares according to data-flow dependencies; the convention
-does not provide automatic dependency resolution.
+Producers needing codegen today MUST inline the middleware steps in
+their flake and publish the resulting derivations directly as
+`go-pkgs` and `go-pkgs-test`. See FDR-0004's `dagnabitExportMiddleware`
+sketch for the shape the future helper is expected to take.
 
 ## Source filtering: `goSourceFilter`
 
@@ -368,9 +467,14 @@ runs `isDerivation` on every `packages.<system>.<name>` value. A bare
 `lib.cleanSourceWith` set fails both gates
 (see amarbel-llc/nixpkgs#38); a bare `builtins.path` passes
 `nix build` but fails `nix flake check` (see amarbel-llc/nixpkgs#44).
-The `runCommand`-wrapped derivation passes both, so producers can
-write `packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };`
-verbatim.
+The `runCommand`-wrapped derivation passes both, so producers MAY
+use `pkgs.goSourceFilter { src = self; }` directly as the value of a
+`packages.<system>.<name>` flake output. Note that doing so satisfies
+the schema gates but NOT the dual-output convention from § *Producer
+interface*: a compliant producer needs `mkGoPkgs` (or the open-coded
+equivalent) to publish both `go-pkgs` and `go-pkgs-test`.
+`goSourceFilter` is the building block; `mkGoPkgs` is the canonical
+entry point.
 
 ### Default keep-set
 
@@ -532,11 +636,12 @@ Three reasons motivate the colocation pattern:
    call importing the same `gomod.nix`, divergence between call sites
    becomes a single `grep` target: any call lacking
    `inherit goFlakeInputs;` is the bug.
-3. **Symmetry with the producer side.** Producers publish one
-   `packages.${system}.go-pkgs` attribute; consumers publish one
-   `gomod.nix` file. The protocol's two halves each have a single
+3. **Symmetry with the producer side.** Producers publish a single
+   `mkGoPkgs` call (which emits the dual outputs); consumers publish
+   one `gomod.nix` file. The protocol's two halves each have a single
    conventional location, which makes adoption mechanical: producers
-   know where to point inputs, consumers know where to declare them.
+   know where to filter source, consumers know where to declare
+   bridges.
 
 ## Multi-producer closures: `follows` + passthru inheritance
 
@@ -573,10 +678,15 @@ before the build even runs.
 
 A producer flake that itself uses `goFlakeInputs` to source its Go
 modules MAY expose those declarations to consumers via
-`passthru.goFlakeInputs` on its `go-pkgs` derivation. The producer
-SHOULD attach this passthru via `mkGoPkgs`'s `goFlakeInputs` argument
-(see § *Producer interface: `packages.${system}.go-pkgs` and
-`mkGoPkgs`*); the helper performs the attachment automatically.
+`passthru.goFlakeInputs` on its `go-pkgs` (and `go-pkgs-test`)
+derivations. When both outputs are published, the producer SHOULD
+attach the same `passthru.goFlakeInputs` to both so that consumers
+inheriting through either output see the same declarations.
+
+> **Implementation status:** automatic passthru attachment via
+> `mkGoPkgs` is deferred (see § *`mkGoPkgs` helper*). Until a future
+> revision adds it, producers attach the passthru manually by setting
+> it on the inline-built derivations.
 
 Implementations of the bridge MUST read each direct flake-input's
 `passthru.goFlakeInputs` and union the entries into the consumer's
@@ -590,14 +700,11 @@ naturally resolve to the same flake inputs the consumer already has,
 with no extra declaration required:
 
 ```nix
-# producer (e.g. tap)
-packages.${system}.go-pkgs = pkgs.mkGoPkgs {
-  src = self;
-  goFlakeInputs = {
-    "github.com/amarbel-llc/purse-first/libs/dewey" = inputs.dewey;
-  };
-};
-# mkGoPkgs attaches passthru.goFlakeInputs automatically.
+# producer (e.g. tap) — pseudo-code, see Implementation status
+# note below for current attachment mechanism.
+packages.${system} = pkgs.mkGoPkgs { src = self; };
+# both go-pkgs and go-pkgs-test carry passthru.goFlakeInputs =
+# { "github.com/amarbel-llc/purse-first/libs/dewey" = inputs.dewey; }
 
 # consumer (e.g. madder)
 goFlakeInputs = {
@@ -785,6 +892,10 @@ be revisited as the protocol promotes through `proposed → experimental
   surfaced the `goSourceFilter` need.
 - [nixpkgs#41 — linter for missing `goFlakeInputs` threading](https://github.com/amarbel-llc/nixpkgs/issues/41)
   follow-up enforcement gap referenced from § *Consumer convention*.
+- [nixpkgs#46 — split `go-pkgs` output: `mkGoPkgs` emitting `{ go-pkgs, go-pkgs-test }`](https://github.com/amarbel-llc/nixpkgs/issues/46)
+  surfaced the audience-split problem (prod consumers vs. self-consumption /
+  test runners) and motivated the dual-output amendment now reflected in
+  § *Producer interface*.
 
 ### Tracking issues
 

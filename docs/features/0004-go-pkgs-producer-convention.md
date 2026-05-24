@@ -69,44 +69,66 @@ and [RFC 0001 § Source filtering](../rfcs/0001-flake-input-go_mod.md#source-fil
 
 ### Hand-written-only producer (no codegen)
 
+Per RFC 0001's dual-output convention (amended via amarbel-llc/nixpkgs#46),
+a producer MUST publish both `go-pkgs` (prod shape) and `go-pkgs-test`
+(superset including `*_test.go` + `testdata/**`):
+
 ```nix
 # producer flake.nix
 outputs = { self, nixpkgs, ... }:
-  let pkgs = nixpkgs.legacyPackages.${system}; in {
-    # `goSourceFilter` returns a real derivation that satisfies every
-    # flake-output gate (nix eval, nix build, and nix flake check).
-    # See RFC 0001 § Producers without middleware for why bare `self`,
-    # `self.outPath`, and `./.` are NOT the right shapes.
-    packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };
+  let
+    pkgs = nixpkgs.legacyPackages.${system};
+    # mkGoPkgs returns { go-pkgs, go-pkgs-test } from a single call.
+    # Until the helper lands in the overlay (deferred per RFC 0001),
+    # see madder#212 for the inline contract test.
+  in {
+    inherit (pkgs.mkGoPkgs { src = self; }) go-pkgs go-pkgs-test;
+    packages.${system} = {
+      inherit go-pkgs go-pkgs-test;
+    };
   };
 ```
 
 ### Producer with dagnabit middleware (e.g. purse-first, future state)
 
+Middleware-aware producers are out of scope for RFC 0001's current
+revision; the earlier `middlewares` argument is deferred to a separate
+future helper (provisionally `mkGoPkgsWithMiddleware`):
+
 ```nix
-# producer flake.nix
+# producer flake.nix (future state, NOT yet implemented)
 outputs = { self, nixpkgs, ... }:
   let pkgs = nixpkgs.legacyPackages.${system}; in {
-    packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+    inherit (pkgs.mkGoPkgsWithMiddleware {
       src = self;
       middlewares = [ pkgs.dagnabitExportMiddleware ];
-    };
+    }) go-pkgs go-pkgs-test;
   };
 ```
 
 ### Producer with subPath (polyglot repo, e.g. tap)
 
-A flake whose Go module lives at a non-root subdirectory ships the same
-attribute; consumers use `subPath` to scope at the consumer side:
+A flake whose Go module lives at a non-root subdirectory publishes the
+same two attributes scoped to that subdir; consumers use `subPath` to
+slice at the consumer side:
 
 ```nix
 # producer flake.nix (e.g. amarbel-llc/tap)
-packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };   # entire repo tree, filtered to Go files
+inherit (pkgs.mkGoPkgs { src = self; }) go-pkgs go-pkgs-test;
+packages.${system} = { inherit go-pkgs go-pkgs-test; };
 
-# consumer flake.nix (e.g. madder)
+# consumer flake.nix (e.g. madder) — prod consumer
 goFlakeInputs = {
   "github.com/amarbel-llc/tap/go" = {
     src = inputs.tap.packages.${system}.go-pkgs;
+    subPath = "go";
+  };
+};
+
+# consumer flake.nix — test-running consumer
+goFlakeInputs = {
+  "github.com/amarbel-llc/tap/go" = {
+    src = inputs.tap.packages.${system}.go-pkgs-test;
     subPath = "go";
   };
 };
