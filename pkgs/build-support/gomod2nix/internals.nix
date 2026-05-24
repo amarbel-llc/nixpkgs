@@ -64,8 +64,22 @@ let
 
   # Union the consumer's gomod2nix.toml with each flake input's. On
   # conflict (same Go module path in both), consumer wins.
+  #
+  # `bridgedKeys` lists Go module paths handled by goFlakeInputs.
+  # Those keys MUST be removed from the merged `mod` table — they're
+  # wired into vendor/ via `localReplaceCommands` (which reads
+  # goMod.replace), so any entry in `modulesStruct.mod` would cause
+  # mkVendorEnv's symlink.go to pre-populate the same path that the
+  # synthetic `ln -s` then collides with. The leak comes from both
+  # sides: the consumer's own gomod2nix.toml (if they didn't remove
+  # the line) AND producer flake-inputs that pin the same module as
+  # a transitive dep. See amarbel-llc/nixpkgs#50.
   mergeGomod2nixTomls =
-    { consumer, flakeInputs }:
+    {
+      consumer,
+      flakeInputs,
+      bridgedKeys ? [ ],
+    }:
     let
       # Build a single merged attrset across all flake-input mods.
       # `//` is right-wins; in this fold, later flake inputs override
@@ -74,10 +88,11 @@ let
       # resolve manually.)
       flakeInputMerged =
         builtins.foldl' (acc: t: acc // (t.mod or { })) { } flakeInputs;
+      mergedRaw = flakeInputMerged // (consumer.mod or { });
     in
     {
       schema = consumer.schema or 3;
-      mod = flakeInputMerged // (consumer.mod or { });
+      mod = builtins.removeAttrs mergedRaw bridgedKeys;
     };
 
   # Build the merged view of a Go module graph: consumer's go.mod and
@@ -144,6 +159,10 @@ let
           mergeGomod2nixTomls {
             consumer = consumerModulesStruct;
             flakeInputs = flakeInputTomls;
+            # Strip bridged keys so symlink.go doesn't pre-populate
+            # vendor/<X> for modules that localReplaceCommands then
+            # wires synthetically. See amarbel-llc/nixpkgs#50.
+            bridgedKeys = builtins.attrNames normalizedFlakeInputs;
           }
         else
           consumerModulesStruct;

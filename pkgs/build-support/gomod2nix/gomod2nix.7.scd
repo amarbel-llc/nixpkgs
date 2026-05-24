@@ -216,6 +216,18 @@ does not yet track must be added to the consumer's *gomod2nix.toml* (regen
 via *go-sync-wrap*) until full FOD-regen lands as a follow-up — see
 *LIMITATIONS* below.
 
+After the union, all keys named in *goFlakeInputs* are stripped from the
+merged *mod* table. This prevents two leak vectors that would otherwise
+collide with the synthetic *replace*-driven vendor symlinks:
+
+- The consumer's own *gomod2nix.toml* entry for a bridged module (if they
+  haven't removed it).
+- Any producer flake-input that pins the same module as a transitive dep.
+
+Consumers SHOULD remove their own *gomod2nix.toml* lines for bridged
+modules — it keeps the file tidy — but leaving them in is functionally
+harmless. See amarbel-llc/nixpkgs#50.
+
 ## mkGoEnv parity
 
 *mkGoEnv* accepts the same *goFlakeInputs* attribute and applies the same

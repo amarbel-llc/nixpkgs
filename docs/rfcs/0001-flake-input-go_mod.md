@@ -203,10 +203,21 @@ in {
 }
 ```
 
-The consumer's `gomod2nix.toml` MUST NOT carry entries for modules
-declared in `goFlakeInputs`; `go.mod` retains the `require` line
-(Go's parser needs *some* version) with a sentinel pseudo-version such
-as `v0.0.0-00010101000000-000000000000`.
+The consumer's `gomod2nix.toml` SHOULD NOT carry entries for modules
+declared in `goFlakeInputs` — leaving them in is cosmetically untidy
+but functionally harmless (the bridge strips them at merge time).
+`go.mod` retains the `require` line (Go's parser needs *some*
+version) with a sentinel pseudo-version such as
+`v0.0.0-00010101000000-000000000000`.
+
+Implementations MUST remove all keys named in `goFlakeInputs` from
+the merged `modulesStruct.mod` table before passing it to the vendor
+materializer. Without this step, an entry for module X from either
+the consumer's own `gomod2nix.toml` OR any producer flake-input's
+transitive pin would cause the vendor builder to pre-populate
+`vendor/<X>` from a fetched NAR, colliding with the synthetic
+`replace`-driven symlink the bridge wires. See
+amarbel-llc/nixpkgs#50.
 
 ## Producer interface: dual `go-pkgs` outputs and `mkGoPkgs`
 
