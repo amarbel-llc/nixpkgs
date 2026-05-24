@@ -7,10 +7,12 @@ let
   #   - test Go file (cmd/example/main_test.go)
   #   - module files (go.mod, go.sum, gomod2nix.toml)
   #   - workspace files (go.work, go.work.sum)
+  #   - sub-module go.mod/go.sum at libs/dewey/ (amarbel-llc/nixpkgs#47)
   #   - root-anchored testdata/ (testdata/golden.txt)
   #   - nested testdata/ (internal/foo/testdata/cases.json)
+  #   - testdata go.mod fixture that MUST stay out of prod
+  #     (internal/foo/testdata/fixturemod/go.mod)
   #   - non-Go file the filter should drop (README.md)
-  #   - directory that should be traversed but otherwise filtered
   fixture = pkgs.runCommand "mk-go-pkgs-fixture" { } ''
     mkdir -p $out/cmd/example
     echo "package main" > $out/cmd/example/main.go
@@ -22,6 +24,12 @@ let
     touch $out/go.work.sum
     echo "# README" > $out/README.md
 
+    # Sub-module under a go.work `use ./libs/dewey` directive (#47).
+    mkdir -p $out/libs/dewey
+    echo "module example.com/x/libs/dewey" > $out/libs/dewey/go.mod
+    touch $out/libs/dewey/go.sum
+    echo "package dewey" > $out/libs/dewey/dewey.go
+
     mkdir -p $out/testdata
     echo "golden" > $out/testdata/golden.txt
 
@@ -29,6 +37,11 @@ let
     echo "package foo" > $out/internal/foo/foo.go
     mkdir -p $out/internal/foo/testdata
     echo '{"k":"v"}' > $out/internal/foo/testdata/cases.json
+
+    # testdata-resident go.mod fixture — MUST NOT be promoted into prod
+    # by the relaxed isModuleFile predicate (#47).
+    mkdir -p $out/internal/foo/testdata/fixturemod
+    echo "module example.com/fixturemod" > $out/internal/foo/testdata/fixturemod/go.mod
   '';
 
   built = pkgs.mkGoPkgs { src = fixture; };
@@ -46,16 +59,20 @@ let
   prodHasNested = builtins.pathExists "${built.go-pkgs}/internal/foo/foo.go";
   # testdata directories are always preserved (the empty-directory
   # leakthrough documented in goSourceFilter); what MUST be filtered is
-  # their file contents.
-  prodRootTestdataContents =
-    if builtins.pathExists "${built.go-pkgs}/testdata"
-    then builtins.attrNames (builtins.readDir "${built.go-pkgs}/testdata")
-    else [ ];
-  prodNestedTestdataContents =
-    if builtins.pathExists "${built.go-pkgs}/internal/foo/testdata"
-    then builtins.attrNames (builtins.readDir "${built.go-pkgs}/internal/foo/testdata")
-    else [ ];
+  # the specific files inside them.
+  prodHasRootTestdataFile = builtins.pathExists "${built.go-pkgs}/testdata/golden.txt";
+  prodHasNestedTestdataFile =
+    builtins.pathExists "${built.go-pkgs}/internal/foo/testdata/cases.json";
   prodHasMainTest = builtins.pathExists "${built.go-pkgs}/cmd/example/main_test.go";
+
+  # Sub-module workspace files (#47).
+  prodHasSubModuleGoMod = builtins.pathExists "${built.go-pkgs}/libs/dewey/go.mod";
+  prodHasSubModuleGoSum = builtins.pathExists "${built.go-pkgs}/libs/dewey/go.sum";
+  prodHasSubModuleGo = builtins.pathExists "${built.go-pkgs}/libs/dewey/dewey.go";
+
+  # Testdata-resident go.mod fixture MUST stay out of prod (#47 negative).
+  prodHasTestdataGoMod =
+    builtins.pathExists "${built.go-pkgs}/internal/foo/testdata/fixturemod/go.mod";
 
   testTopFiles = builtins.attrNames (builtins.readDir built.go-pkgs-test);
   testHasMainTest = builtins.pathExists "${built.go-pkgs-test}/cmd/example/main_test.go";
@@ -81,13 +98,19 @@ pkgs.runCommand "mk-go-pkgs-tests"
       (assert' "prod: keeps gomod2nix.toml" (builtins.elem "gomod2nix.toml" prodTopFiles))
       (assert' "prod: keeps cmd/example/main.go" prodHasNested)
 
+      # #47: sub-module workspace files must be kept.
+      (assert' "prod: keeps libs/dewey/go.mod (#47)" prodHasSubModuleGoMod)
+      (assert' "prod: keeps libs/dewey/go.sum (#47)" prodHasSubModuleGoSum)
+      (assert' "prod: keeps libs/dewey/dewey.go" prodHasSubModuleGo)
+
       # go-pkgs drops the test surface (file contents — directories
       # may persist empty as a goSourceFilter-shared leakthrough).
       (assert' "prod: drops cmd/example/main_test.go" (! prodHasMainTest))
-      (assert' "prod: root testdata/ is empty"
-        (prodRootTestdataContents == [ ]))
-      (assert' "prod: nested testdata/ is empty"
-        (prodNestedTestdataContents == [ ]))
+      (assert' "prod: drops testdata/golden.txt" (! prodHasRootTestdataFile))
+      (assert' "prod: drops testdata/cases.json" (! prodHasNestedTestdataFile))
+      # #47 negative: testdata-resident go.mod must NOT be promoted.
+      (assert' "prod: drops testdata/fixturemod/go.mod (#47 negative)"
+        (! prodHasTestdataGoMod))
       (assert' "prod: drops README.md (no extras)"
         (! (builtins.elem "README.md" prodTopFiles)))
 

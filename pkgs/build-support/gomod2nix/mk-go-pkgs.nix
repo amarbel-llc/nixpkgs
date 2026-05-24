@@ -36,17 +36,6 @@
 #    interface carries the corresponding SHOULD recommendation.
 { lib, runCommand }:
 let
-  # Module / workspace files kept in BOTH outputs (mirrors
-  # `goSourceFilter`'s default keep-set; see amarbel-llc/nixpkgs#45 for
-  # go.work / go.work.sum).
-  isModuleFile =
-    relPath:
-    relPath == "go.mod"
-    || relPath == "go.sum"
-    || relPath == "go.work"
-    || relPath == "go.work.sum"
-    || relPath == "gomod2nix.toml";
-
   # Build a derivation containing the files of `src` that satisfy
   # `predicate`, always traversing directories. The predicate receives
   # the source-tree-relative path of each non-directory file.
@@ -103,6 +92,34 @@ let
         relPath:
         builtins.match ".*/testdata/.*" relPath != null
         || builtins.match "^testdata/.*" relPath != null;
+
+      # Module files kept in BOTH outputs.
+      #
+      # - go.mod / go.sum / gomod2nix.toml: matched by basename anywhere
+      #   in the tree (except under testdata/). go.work-based workspaces
+      #   carry a child go.mod/go.sum at each `use` directive's target;
+      #   self-consumption fails if the child files are filtered out
+      #   (gomod2nix opens them when walking the workspace). See
+      #   amarbel-llc/nixpkgs#47.
+      # - go.work / go.work.sum: matched only at the root (these files
+      #   only ever live at the workspace root).
+      #
+      # The under-testdata exclusion uses `isTestdataFile` so the
+      # under-testdata definition stays in one place.
+      isModuleFile =
+        relPath:
+        (
+          lib.elem (baseNameOf relPath) [
+            "go.mod"
+            "go.sum"
+            "gomod2nix.toml"
+          ]
+          && !isTestdataFile relPath
+        )
+        || lib.elem relPath [
+          "go.work"
+          "go.work.sum"
+        ];
 
       prodPredicate =
         relPath:
