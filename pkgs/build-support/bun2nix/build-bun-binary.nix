@@ -79,7 +79,7 @@
 
   :::
 */
-{ pkgs, lib, bun, fetchBunDeps, eslintCache, mkWrapper }:
+{ pkgs, lib, bun, fetchBunDeps, eslintCache, mkWrapper, mkLint }:
 
 let
   # Map a .ts/.tsx/.mts/.cts basename to .js
@@ -101,7 +101,12 @@ let
       (builtins.baseNameOf name);
 
   # Shared: create the bundle derivation for one or more entrypoints.
-  # entrypointPaths is a list of source-relative paths.
+  # entrypointPaths is a list of source-relative paths. Lint, when
+  # enabled, is its own derivation keyed only on
+  # (src, eslintCache, entrypointPaths) and added as a buildInput so
+  # failures propagate without re-running lint when unrelated bundle
+  # inputs change. The lint derivation is attached to the bundle's
+  # passthru so wrappers can re-expose it for testBuildFailure' targeting.
   mkBundle =
     {
       pname,
@@ -123,19 +128,19 @@ let
         };
       };
       runLint = !disableLint && eslintCache != null;
+      lint = mkLint {
+        inherit pname version src eslintCache entrypointPaths;
+      };
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "${pname}-bundle";
       inherit version src;
 
       nativeBuildInputs = [ bun ];
+      buildInputs = lib.optional runLint lint;
 
       buildPhase = ''
         runHook preBuild
-
-        ${lib.optionalString runLint ''
-          ${eslintCache}/bin/eslint ${lib.escapeShellArgs entrypointPaths}
-        ''}
 
         ${lib.optionalString hasDeps ''
           export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
@@ -155,6 +160,8 @@ let
 
       dontInstall = true;
       dontFixup = true;
+
+      passthru = lib.optionalAttrs runLint { inherit lint; };
     };
 
 in
@@ -196,6 +203,7 @@ in
       name = pname;
       inherit bundle runtimeInputs runtimeEnv;
       jsFile = tsToJs entrypoint;
+      lint = bundle.passthru.lint or null;
     };
 
   # Multiple entrypoints → multiple binaries in one $out.
@@ -237,6 +245,7 @@ in
         mkWrapper {
           inherit name bundle runtimeInputs runtimeEnv;
           jsFile = tsToJs entrypoint;
+          lint = bundle.passthru.lint or null;
         }
       ) entrypoints;
     in

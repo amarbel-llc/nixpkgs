@@ -95,7 +95,7 @@
 
   :::
 */
-{ pkgs, lib, bun, fetchBunDeps, eslintCache, mkWrapper }:
+{ pkgs, lib, bun, fetchBunDeps, eslintCache, mkWrapper, mkLint }:
 
 let
   # -- Helpers --
@@ -284,21 +284,26 @@ let
       syntheticPackageJson = pkgs.writeText "${pname}-package.json" (mkPackageJson pname allDeps);
       syntheticBunLock = pkgs.writeText "${pname}-bun.lock" (mkBunLock pname allDeps);
 
+      # -- Lint (when enabled) -- separate derivation keyed only on
+      # (src, eslintCache, entrypointPaths) so it doesn't re-run when
+      # unrelated bundle inputs change. Failures propagate to the
+      # bundle via buildInputs.
+      lint = mkLint {
+        inherit pname version src eslintCache;
+        entrypointPaths = [ entrypoint ];
+      };
+
       # -- Bundle derivation --
       bundle = pkgs.stdenvNoCC.mkDerivation {
         pname = "${pname}-bundle";
         inherit version src;
 
         nativeBuildInputs = [ bun ];
+        buildInputs = lib.optional runLint lint;
 
         buildPhase =
           ''
             runHook preBuild
-          ''
-          + lib.optionalString runLint ''
-            ${eslintCache}/bin/eslint ${lib.escapeShellArg entrypoint}
-          ''
-          + ''
 
             export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
           ''
@@ -332,12 +337,15 @@ let
 
         dontInstall = true;
         dontFixup = true;
+
+        passthru = lib.optionalAttrs runLint { inherit lint; };
       };
     in
     mkWrapper {
       name = pname;
       inherit bundle runtimeInputs runtimeEnv;
       jsFile = tsToJs entrypoint;
+      lint = bundle.passthru.lint or null;
     };
 
   # Tier 4: file-based deps — deps declared inline via ///!dep directives.

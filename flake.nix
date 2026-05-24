@@ -145,17 +145,17 @@
           };
 
           # Smoke check: confirm the lint stack actually fires on a
-          # known-bad fixture. Targets `.passthru.bundle` because
+          # known-bad fixture. Targets `.passthru.lint` because
           # `testBuildFailure'` can only catch failures from the
-          # wrapped derivation's own builder — wrapper-level build-input
-          # failures cascade past it.
+          # wrapped derivation's own builder — failures in the lint
+          # derivation cascade past the wrapper and bundle.
           bun2nix-lint-stack-rejects-process-exit = pkgs.testers.testBuildFailure' {
             drv =
               (pkgs.buildBunBinary {
                 pname = "test-bin-process-exit-fail";
                 version = "0.0.1";
                 src = ./pkgs/build-support/bun2nix/tests/bin-process-exit-fail;
-              }).passthru.bundle;
+              }).passthru.lint;
             expectedBuilderLogEntries = [ "n/no-process-exit" ];
           };
 
