@@ -50,6 +50,12 @@
   : Attrset of `{ "pkg-name" = oldSrc: newSrc; }` source overrides forwarded
     to `fetchBunDeps`.
 
+  `disableLint` (optional, default `false`)
+  : Skip the eslint pass for this call. Useful when the lint stack flags
+    a pattern that's intentional. Per-line escape hatches via
+    `// eslint-disable-next-line n/no-process-exit` are preferred when
+    only one site needs the exemption.
+
   # Type
 
   ```
@@ -73,7 +79,7 @@
 
   :::
 */
-{ pkgs, lib, bun, fetchBunDeps }:
+{ pkgs, lib, bun, fetchBunDeps, eslintCache }:
 
 let
   # Map a .ts/.tsx/.mts/.cts basename to .js
@@ -107,6 +113,7 @@ let
       bunfigPath ? null,
       npmrcPath ? null,
       overrides ? { },
+      disableLint ? false,
     }:
     let
       hasDeps = bunNix != null;
@@ -115,6 +122,7 @@ let
           inherit bunNix bunfigPath npmrcPath overrides;
         };
       };
+      runLint = !disableLint && eslintCache != null;
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "${pname}-bundle";
@@ -124,6 +132,10 @@ let
 
       buildPhase = ''
         runHook preBuild
+
+        ${lib.optionalString runLint ''
+          ${eslintCache}/bin/eslint ${lib.escapeShellArgs entrypointPaths}
+        ''}
 
         ${lib.optionalString hasDeps ''
           export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
@@ -146,6 +158,10 @@ let
     };
 
   # Shared: create a wrapper script for a single binary.
+  # The bundle derivation is exposed as a passthru attr so callers
+  # (e.g. pkgs.testers.testBuildFailure') can target the bundle's own
+  # builder — failures inside the bundle propagate as build-input
+  # failures to the wrapper, which testBuildFailure cannot catch.
   mkWrapper =
     {
       name,
@@ -161,13 +177,14 @@ let
       pathSetup = lib.optionalString (runtimeInputs != [ ]) ''
         export PATH="${lib.makeBinPath runtimeInputs}:$PATH"
       '';
+      wrapper = pkgs.writeShellScriptBin name ''
+        ${envExports}
+        ${pathSetup}
+        unset LD_LIBRARY_PATH
+        exec ${bun}/bin/bun ${bundle}/${jsFile} "$@"
+      '';
     in
-    pkgs.writeShellScriptBin name ''
-      ${envExports}
-      ${pathSetup}
-      unset LD_LIBRARY_PATH
-      exec ${bun}/bin/bun ${bundle}/${jsFile} "$@"
-    '';
+    wrapper // { passthru = (wrapper.passthru or { }) // { inherit bundle; }; };
 
 in
 {
@@ -185,6 +202,7 @@ in
       bunfigPath ? null,
       npmrcPath ? null,
       overrides ? { },
+      disableLint ? false,
       ...
     }:
     let
@@ -198,6 +216,7 @@ in
           bunfigPath
           npmrcPath
           overrides
+          disableLint
           ;
         entrypointPaths = [ entrypoint ];
       };
@@ -223,6 +242,7 @@ in
       bunfigPath ? null,
       npmrcPath ? null,
       overrides ? { },
+      disableLint ? false,
       ...
     }:
     let
@@ -236,6 +256,7 @@ in
           bunfigPath
           npmrcPath
           overrides
+          disableLint
           ;
         entrypointPaths = builtins.attrValues entrypoints;
       };

@@ -24,7 +24,7 @@ check-changed:
 
     # amarbel-packages overlay: always check these (not discoverable by filename).
     # Checked separately since some are functions, not derivations.
-    amarbel_pkgs=(fetchGgufModel buildBunBinary buildBunBinaries buildZxScript buildZxScriptFromFile fetchBunDeps mkBunDerivation writeBunApplication writeBunScriptBin gomod2nix gomod2nix-man)
+    amarbel_pkgs=(fetchGgufModel buildBunBinary buildBunBinaries buildZxScript buildZxScriptFromFile eslintCache fetchBunDeps mkBunDerivation writeBunApplication writeBunScriptBin gomod2nix gomod2nix-man)
     for pkg in "${amarbel_pkgs[@]}"; do
         gum log --level info "evaluating $pkg"
         if nix eval "path:.#$pkg" > /dev/null 2>&1; then
@@ -152,3 +152,26 @@ test-overlay-against-maneater:
     NIXPKGS_ALLOW_UNFREE=1 nix flake check \
       --keep-going --no-build --impure \
       --override-input nixpkgs "path:$local_overlay"
+
+# [explore] Sync a directory tree from amarbel-llc/bun via gh API.
+# Used by issue #52 to seed pkgs/build-support/bun2nix/lint/ from the
+# upstream lint stack. After lint is landed here, this is the paved path
+# for refreshing bun.lock/bun.nix when amarbel-llc/bun regenerates them.
+#   just sync-bun-tree nix/bun2nix/lint pkgs/build-support/bun2nix/lint
+[group: 'explore']
+sync-bun-tree src dst ref="master":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{ dst }}"
+    gh api --paginate "repos/amarbel-llc/bun/contents/{{ src }}?ref={{ ref }}" \
+      --jq '.[] | select(.type == "file") | .path' \
+    | while read -r path; do
+        rel="${path#{{ src }}/}"
+        out="{{ dst }}/$rel"
+        mkdir -p "$(dirname "$out")"
+        gum log --level info "fetching $path"
+        gh api "repos/amarbel-llc/bun/contents/$path?ref={{ ref }}" \
+          --jq '.content' \
+        | base64 -d > "$out"
+      done
+    gum log --level info "sync-bun-tree: copied {{ src }} -> {{ dst }}"

@@ -25,7 +25,14 @@
   lib ? pkgs.lib,
   bun ? pkgs.bun,
   cacheEntryCreator ? throw "bun2nix: cacheEntryCreator must be provided — pass packages.cacheEntryCreator from the nix-community/bun2nix flake",
-}:
+  # Lint stack override. Omit to use the vendored stack at ./lint/.
+  # Pass a custom derivation to override. Pass null to disable lint
+  # globally — every buildBunBinary / buildZxScript call then behaves
+  # as if `disableLint = true`. The default must build inside the let
+  # block (it depends on `fetchBunDeps`), so it's resolved below via
+  # `args.eslintCache or defaultEslintCache`.
+  ...
+}@args:
 
 let
   # -- leaf components (no internal deps) --
@@ -60,12 +67,26 @@ let
 
   writeBunScriptBin = import ./write-bun-script-bin.nix { inherit pkgs bun; };
 
+  # Lint stack: materialized once per (eslint, plugin, parser) version
+  # triple and reused by every buildBunBinary / buildZxScript bundle.
+  # Bumps go through `nix run .#regen-bun2nix-lint-stack` at the flake
+  # level. Callers can pass `eslintCache = null` to disable lint
+  # globally; per-call opt-out is `disableLint = true`.
+  defaultEslintCache = import ./lint/eslint-cache.nix {
+    inherit pkgs bun fetchBunDeps;
+    bunNix = ./lint/bun.nix;
+    packageJson = ./lint/package.json;
+    bunLock = ./lint/bun.lock;
+    eslintConfig = ./lint/eslint.config.js;
+  };
+  eslintCache = args.eslintCache or defaultEslintCache;
+
   bunBinaryBuilders = import ./build-bun-binary.nix {
-    inherit pkgs lib bun fetchBunDeps;
+    inherit pkgs lib bun fetchBunDeps eslintCache;
   };
 
   zxScriptBuilder = import ./build-zx-script.nix {
-    inherit pkgs lib bun fetchBunDeps;
+    inherit pkgs lib bun fetchBunDeps eslintCache;
   };
 
 in
@@ -73,6 +94,7 @@ in
   inherit (bunBinaryBuilders) buildBunBinary buildBunBinaries;
   inherit (zxScriptBuilder) buildZxScript buildZxScriptFromFile;
   inherit
+    eslintCache
     fetchBunDeps
     hook
     writeBunApplication

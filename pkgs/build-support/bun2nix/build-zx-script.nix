@@ -54,6 +54,10 @@
   `overrides` (optional)
   : Source overrides forwarded to `fetchBunDeps` (tier 3 only).
 
+  `disableLint` (optional, default `false`)
+  : Skip the eslint pass for this call. Same semantics as
+    `buildBunBinary`'s `disableLint`.
+
   # Type
 
   ```
@@ -91,7 +95,7 @@
 
   :::
 */
-{ pkgs, lib, bun, fetchBunDeps }:
+{ pkgs, lib, bun, fetchBunDeps, eslintCache }:
 
 let
   # -- Helpers --
@@ -270,12 +274,14 @@ let
       bunfigPath ? null,
       npmrcPath ? null,
       overrides ? { },
+      disableLint ? false,
       _skipBuiltinZx ? false,
       ...
     }:
     let
       # Tier 3: full override via bunNix
       useBunNix = bunNix != null;
+      runLint = !disableLint && eslintCache != null;
 
       # Tiers 1 & 2: merge vendored zx with extraDeps
       # When _skipBuiltinZx is true (used by buildZxScriptFromFile), the
@@ -312,6 +318,11 @@ let
         buildPhase =
           ''
             runHook preBuild
+          ''
+          + lib.optionalString runLint ''
+            ${eslintCache}/bin/eslint ${lib.escapeShellArg entrypoint}
+          ''
+          + ''
 
             export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
           ''
@@ -374,6 +385,7 @@ let
       bunBuildFlags ? [ ],
       runtimeInputs ? [ ],
       runtimeEnv ? { },
+      disableLint ? false,
       ...
     }:
     let
@@ -406,6 +418,7 @@ let
         runtimeEnv
         extraDeps
         entrypoint
+        disableLint
         ;
       src = srcDir;
       _skipBuiltinZx = true;

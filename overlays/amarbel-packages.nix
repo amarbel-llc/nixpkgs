@@ -16,6 +16,7 @@ final: prev: {
     buildBunBinaries
     buildZxScript
     buildZxScriptFromFile
+    eslintCache
     fetchBunDeps
     mkBunDerivation
     writeBunApplication
