@@ -8,6 +8,10 @@ let
     echo "module example.com/x" > $out/go.mod
     touch $out/go.sum
     touch $out/gomod2nix.toml
+    # Workspace files — load-bearing for go.work-based multi-module
+    # producers. See amarbel-llc/nixpkgs#45.
+    echo "go 1.26" > $out/go.work
+    touch $out/go.work.sum
     echo "# README" > $out/README.md
     mkdir -p $out/doc
     echo "doc" > $out/doc/intro.md
@@ -40,6 +44,9 @@ pkgs.runCommand "go-source-filter-tests"
       (assert' "basic: keeps go.mod" (builtins.elem "go.mod" basicFiles))
       (assert' "basic: keeps go.sum" (builtins.elem "go.sum" basicFiles))
       (assert' "basic: keeps gomod2nix.toml" (builtins.elem "gomod2nix.toml" basicFiles))
+      # amarbel-llc/nixpkgs#45: go.work + go.work.sum in defaults
+      (assert' "basic: keeps go.work (#45)" (builtins.elem "go.work" basicFiles))
+      (assert' "basic: keeps go.work.sum (#45)" (builtins.elem "go.work.sum" basicFiles))
       (assert' "basic: drops README.md" (! (builtins.elem "README.md" basicFiles)))
       (assert' "basic: drops VERSION" (! (builtins.elem "VERSION" basicFiles)))
       (assert' "basic: keeps cmd/example/main.go"

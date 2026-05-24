@@ -24,12 +24,16 @@ as a *packages.${system}.go-pkgs* flake output (per RFC 0001) and as
 Internally the filter is built with *builtins.path* and wrapped in a
 *runCommand* that copies the filtered tree into *$out*.
 
-The default keep-set is the minimum required by the Go build system
-plus the *gomod2nix.toml* lockfile:
+The default keep-set is the minimum required by the Go build system,
+plus the canonical workspace files, plus the *gomod2nix.toml*
+lockfile:
 
 - *\*.go* — any Go source file
 - *go.mod*
 - *go.sum*
+- *go.work* — workspace manifest (single-module producers don't
+  ship this; the regex matches nothing in that case)
+- *go.work.sum* — workspace checksum file
 - *gomod2nix.toml*
 
 All other files are dropped. The *extras* argument adds additional

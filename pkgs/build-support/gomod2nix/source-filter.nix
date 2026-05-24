@@ -42,6 +42,14 @@ let
     ".*\\.go$"
     "^go\\.mod$"
     "^go\\.sum$"
+    # go.work and go.work.sum are load-bearing for go.work-based
+    # multi-module workspaces. Without them, `go build` against the
+    # filtered tree falls back to single-module mode and fails to
+    # resolve cross-module imports. Single-module producers are
+    # unaffected — these regexes match nothing in trees that have no
+    # go.work file. See amarbel-llc/nixpkgs#45.
+    "^go\\.work$"
+    "^go\\.work\\.sum$"
     "^gomod2nix\\.toml$"
   ];
 

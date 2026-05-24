@@ -484,7 +484,15 @@ against the source-tree-relative path of each file):
 - `.*\.go$` — any Go source file.
 - `^go\.mod$` — the module manifest.
 - `^go\.sum$` — the module checksum file.
+- `^go\.work$` — the workspace manifest (matches `go help workspace`'s
+  canonical file list).
+- `^go\.work\.sum$` — the workspace checksum file.
 - `^gomod2nix\.toml$` — the `gomod2nix` lockfile.
+
+Workspace files (`go.work`, `go.work.sum`) are load-bearing for
+multi-module producers using `go.work`. Single-module producers are
+unaffected — these regexes match nothing in trees that have no
+`go.work` file. See amarbel-llc/nixpkgs#45.
 
 All other files MUST be dropped unless matched by an entry in
 `extras`.
