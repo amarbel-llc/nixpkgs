@@ -150,7 +150,9 @@ buildGoApplication {
   ...
 };
 
-# Polyglot: pwd must point at the Go subdir
+# Polyglot: pwd must point at the Go subdir (substitute the actual
+# directory name in your repo — "/go" is the convention some
+# amarbel-llc repos use, but the protocol places no constraint on it)
 buildGoApplication {
   src = self;
   pwd = self + "/go";

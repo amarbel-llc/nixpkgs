@@ -126,11 +126,18 @@ let
         ${caller}: pwd = ${toString p}
         MUST contain go.mod or go.work, but neither was found.
 
-        Polyglot repos with Go in a subdirectory need an explicit pwd:
+        Polyglot repos with Go in a subdirectory need an explicit pwd
+        pointing at THAT subdirectory (whatever its actual name is in
+        your repo):
 
-          pwd = <src>/<subdir>;   # e.g. self + "/go"
+          pwd = src + "/<your-go-subdir>";
 
-        And the subdirectory's go.mod/go.sum/gomod2nix.toml MUST be in
+        For example, a repo whose Go module lives in `./go/` would use
+        `pwd = src + "/go"`; one with Go under `./backend/` would use
+        `pwd = src + "/backend"`. The literal string above is a
+        placeholder, not the path to use.
+
+        The subdirectory's go.mod/go.sum/gomod2nix.toml MUST also be in
         the filtered source tree (see goSourceFilter / mkGoPkgs).
       '';
 
