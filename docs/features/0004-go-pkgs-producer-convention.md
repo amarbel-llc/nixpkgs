@@ -73,7 +73,10 @@ and [RFC 0001 § Source filtering](../rfcs/0001-flake-input-go_mod.md#source-fil
 # producer flake.nix
 outputs = { self, nixpkgs, ... }:
   let pkgs = nixpkgs.legacyPackages.${system}; in {
-    packages.${system}.go-pkgs = self;
+    # `self` itself is a flake attrset, which the flake schema rejects
+    # in the packages.<system>.<name> slot. Coerce with .outPath, or use
+    # `./.` / `pkgs.goSourceFilter { src = self; }` instead. See #38.
+    packages.${system}.go-pkgs = self.outPath;
   };
 ```
 
@@ -97,7 +100,7 @@ attribute; consumers use `subPath` to scope at the consumer side:
 
 ```nix
 # producer flake.nix (e.g. amarbel-llc/tap)
-packages.${system}.go-pkgs = self;   # entire repo tree
+packages.${system}.go-pkgs = self.outPath;   # entire repo tree (see #38)
 
 # consumer flake.nix (e.g. madder)
 goFlakeInputs = {

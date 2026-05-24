@@ -280,15 +280,22 @@ filtering needs MAY use either of:
 packages.${system}.go-pkgs = pkgs.mkGoPkgs { src = self; };
 
 # Direct, bypassing the helper:
-packages.${system}.go-pkgs = self;
+packages.${system}.go-pkgs = self.outPath;
 ```
 
 Both are valid; `mkGoPkgs { src = self; middlewares = [ ]; }` is the
-identity transformation. The bare-`self` form is RECOMMENDED only for
-trivially small repos where the build closure tax of non-Go file edits
-is negligible; otherwise, producers SHOULD use
+identity transformation. The bare-`self.outPath` form is RECOMMENDED
+only for trivially small repos where the build closure tax of non-Go
+file edits is negligible; otherwise, producers SHOULD use
 `pkgs.goSourceFilter { src = self; }` to scope the closure to
 Go-relevant files (see § *Source filtering: `goSourceFilter`*).
+
+> [!NOTE]
+> Bare `self` (without `.outPath`) is a flake attrset, which the
+> flake schema rejects in the `packages.<system>.<name>` slot
+> ("expected ... a derivation or path but found a set"). Coerce
+> via `.outPath` or use `pkgs.goSourceFilter { src = self; }`,
+> which already returns a path. See amarbel-llc/nixpkgs#38.
 
 ### Producers with middleware
 

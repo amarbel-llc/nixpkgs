@@ -62,6 +62,16 @@ nix-build-overridden: _stage-untracked
     nix build --print-build-logs .#via-gomod2nix-overridden
     ./result/bin/goflake-poc
 
+# Phase 7: verify goSourceFilter's return value passes the flake-schema
+# check for packages.<system>.<name>. Tracks amarbel-llc/nixpkgs#38 and #43.
+# Before the fix: fails with "expected ... derivation or path but found a set".
+# After the fix: builds cleanly, result/ is the filtered store path.
+[group('explore')]
+nix-build-go-pkgs: _stage-untracked
+    rm -f flake.lock
+    nix build --print-build-logs .#go-pkgs-test
+    ls -la result
+
 # Devshell parity (Task 6): mkGoEnv with goFlakeInputs must produce the
 # same merged go.mod and vendorEnv as buildGoApplication. Asserts the
 # store paths match — strongest possible parity, since equal store paths
