@@ -24,6 +24,13 @@ promotion-criteria: |
   those repos.
 ---
 
+> **Status:** the normative interface specification for the producer
+> convention now lives in [RFC 0001](../rfcs/0001-flake-input-go_mod.md).
+> This FDR is preserved for journey context and problem-statement
+> framing. For the authoritative MUST/SHOULD/MAY contract on
+> `packages.${system}.go-pkgs`, `mkGoPkgs`, and `goSourceFilter`,
+> see the RFC.
+
 # go-pkgs producer convention + middleware
 
 ## Problem Statement
@@ -55,133 +62,8 @@ should not have to opt into machinery they don't need.
 
 ## Interface
 
-### Flake output naming
-
-A Go-source-producing flake SHOULD expose its canonical Go source tree at:
-
-```
-packages.${system}.go-pkgs
-```
-
-The value MUST be a derivation (or path) whose output is a directory
-containing a Go module — typically with `go.mod` at the root, importable
-packages in subdirectories.
-
-Consumers default to referencing this attribute by name when wiring
-`goFlakeInputs`:
-
-```nix
-goFlakeInputs = {
-  "github.com/amarbel-llc/purse-first" = inputs.purse-first.packages.${system}.go-pkgs;
-};
-```
-
-Override is supported by passing any other derivation through
-`goFlakeInputs.<key> = { src = inputs.foo.packages.${system}.<other-name>; }`.
-The bridge has no opinion about which derivation is referenced; the
-convention only standardizes the default attribute name for discovery.
-
-### `mkGoPkgs` helper
-
-The fork's overlay exposes `pkgs.mkGoPkgs` for producers who want a
-middleware-aware wrapper:
-
-```nix
-mkGoPkgs = { src, middlewares ? [ ], goFlakeInputs ? { }, subPath ? "" }: ...
-```
-
-Arguments:
-
-- `src` — a derivation or path containing the Go source tree.
-- `middlewares` — a list of source transformations. Each middleware is a
-  function `src -> src` (derivation → derivation). The pipeline is
-  applied left-to-right: `foldl' (acc: mw: mw acc) src middlewares`. When
-  the list is empty (default), `mkGoPkgs` returns `src` unchanged.
-- `goFlakeInputs` — optional declaration of flake-input-driven Go
-  dependencies that the producer itself uses. When non-empty, `mkGoPkgs`
-  attaches the value to the result derivation as
-  `passthru.goFlakeInputs`. Consumers of this `go-pkgs` derivation
-  inherit those entries at depth-1 through the bridge's transitive
-  inheritance (see [FDR-0003 § *Multi-producer closures*](./0003-bridge-go-flake-inputs.md)).
-  Producers that don't themselves consume flake-input-driven deps leave
-  this empty.
-- `subPath` — optional subdirectory hint for tooling. The convention
-  itself does not slice the tree by `subPath`; consumers control that at
-  consume time via the `subPath` attribute on `goFlakeInputs` entries.
-
-The `passthru.goFlakeInputs` attachment is the producer-side half of
-the bridge's depth-1 transitive inheritance convention. A producer
-that itself sources Go deps from flake inputs declares those deps once
-via `mkGoPkgs`'s `goFlakeInputs` arg; downstream consumers inherit
-those declarations without redeclaring them, and align shared deps
-across the closure with `inputs.<producer>.inputs.<dep>.follows`
-(again, see FDR-0003).
-
-### Producers without middleware
-
-A producer that ships hand-written Go with no codegen has two equivalent
-options:
-
-```nix
-# Explicit, via helper:
-packages.${system}.go-pkgs = pkgs.mkGoPkgs { src = self; };
-
-# Direct, bypassing the helper:
-packages.${system}.go-pkgs = self;
-```
-
-Both are valid. `mkGoPkgs { src = self; middlewares = [ ]; }` is the
-identity transformation; calling it adds no work but signals intent.
-
-### Producers with dagnabit codegen
-
-The fork ships `pkgs.dagnabitExportMiddleware` as an example middleware
-that runs `dagnabit export` over the source tree:
-
-```nix
-# Sketch of the middleware (lives in the fork's overlay)
-dagnabitExportMiddleware = src:
-  pkgs.runCommand "dagnabit-export" {
-    nativeBuildInputs = [ pkgs.dagnabit ];
-  } ''
-    cp -r ${src} $out
-    chmod -R +w $out
-    cd $out
-    dagnabit export
-  '';
-```
-
-A producer composes:
-
-```nix
-packages.${system}.go-pkgs = pkgs.mkGoPkgs {
-  src = self;
-  middlewares = [ pkgs.dagnabitExportMiddleware ];
-};
-```
-
-Dagnabit is one example. Other middlewares (other codegen tools, lint
-passes, format normalizers) plug in the same way. The middleware
-contract is intentionally narrow — `src -> src` — so the set of allowed
-transformations stays composable.
-
-**Ownership boundary**: the *semantics* of `dagnabit export` itself —
-what `//go:generate dagnabit export` markers do, what the output `pkgs/`
-layout looks like, how the CLI handles partial regeneration — are
-owned by `amarbel-llc/purse-first:cmd/dagnabit/`, not by this FDR. The
-`dagnabitExportMiddleware` wrapper here is purely the
-Nix-derivation adapter. Future readers looking for dagnabit's own
-behavior contracts should consult purse-first directly; this FDR
-documents only how the dagnabit binary is invoked from a `mkGoPkgs`
-pipeline. The same boundary applies to any other middleware: the
-fork's overlay packages the adapter, the upstream tool owns its
-behavior.
-
-Concrete provisioning decisions for `dagnabitExportMiddleware` —
-where the `dagnabit` binary comes from at middleware build time, and
-whether the middleware contract needs parameterization for tools with
-flags — are tracked at
-[amarbel-llc/nixpkgs#35](https://github.com/amarbel-llc/nixpkgs/issues/35).
+See [RFC 0001 § Producer interface](../rfcs/0001-flake-input-go_mod.md#producer-interface-packagessystemgo-pkgs-and-mkgopkgs)
+and [RFC 0001 § Source filtering](../rfcs/0001-flake-input-go_mod.md#source-filtering-gosourcefilter).
 
 ## Examples
 
