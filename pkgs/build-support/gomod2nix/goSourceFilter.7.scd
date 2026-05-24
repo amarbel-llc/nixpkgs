@@ -15,10 +15,12 @@ packages.${system}.go-pkgs = pkgs.goSourceFilter {
 
 # DESCRIPTION
 
-*pkgs.goSourceFilter* produces a *cleanSourceWith*-filtered view of
-a Go project's source tree. The output is suitable for use as a
-*packages.${system}.go-pkgs* flake output (per RFC 0001) and as
-*src* to *buildGoApplication* via the *goFlakeInputs* bridge.
+*pkgs.goSourceFilter* produces a filtered view of a Go project's
+source tree as a store-path-coercible value (via *builtins.path*).
+The output is suitable for direct use as a
+*packages.${system}.go-pkgs* flake output (per RFC 0001; no *.outPath*
+coercion needed) and as *src* to *buildGoApplication* via the
+*goFlakeInputs* bridge.
 
 The default keep-set is the minimum required by the Go build system
 plus the *gomod2nix.toml* lockfile:
@@ -40,12 +42,12 @@ patterns; see *EXTRAS* below.
 
 # EXTRAS
 
-*extras* are applied via *lib.cleanSourceWith* internally. Directories
-are always traversed (so the filter composes on deep trees), and the
-regex list (default keep-set plus *extras*) is matched against the
-source-tree-relative path of each regular file via *builtins.match*.
-Patterns are *regex* strings, not glob patterns; nixpkgs stdlib does
-not ship glob matching.
+*extras* are applied via *builtins.path* internally (with a filter
+predicate). Directories are always traversed (so the filter composes
+on deep trees), and the regex list (default keep-set plus *extras*)
+is matched against the source-tree-relative path of each regular file
+via *builtins.match*. Patterns are *regex* strings, not glob patterns;
+nixpkgs stdlib does not ship glob matching.
 
 Examples:
 
@@ -67,12 +69,12 @@ extras = [ "^doc/.*" "^VERSION$" ".*\\.tmpl$" ];
 
 *goSourceFilter* preserves *src.name*. The resulting store path is
 named identically to *src*. Producers who want a more diagnostic
-name can wrap the output:
+name can rebuild the path with a different *name*:
 
 ```
-lib.cleanSourceWith {
+builtins.path {
   name = "${src.name}-go-source";
-  src = pkgs.goSourceFilter { inherit src; };
+  path = pkgs.goSourceFilter { inherit src; };
 }
 ```
 
@@ -96,8 +98,8 @@ packages.${system}.go-pkgs = pkgs.mkGoPkgs {
 
 - *extras* uses regex, not globs (no nixpkgs stdlib equivalent of
   *fnmatch*).
-- Store-path naming preserves *src.name* by default; rename via
-  *cleanSourceWith* if desired.
+- Store-path naming preserves *src.name* by default; rename by
+  re-wrapping with *builtins.path* if desired.
 - *goSourceFilter* operates on *src* as a single tree. Multi-module
   repos with separate Go modules in different subdirectories need
   per-module filter invocations.

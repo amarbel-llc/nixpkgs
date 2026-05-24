@@ -349,12 +349,14 @@ Arguments:
 - `extras` — OPTIONAL. A list of POSIX extended-regex strings (default:
   empty) that augment the default keep-set.
 
-`goSourceFilter` MUST be implemented as a `lib.cleanSourceWith` filter
-(the lower-level primitive that `lib.sources.sourceByRegex` itself
-builds on top of) where directories are always traversed and regex
-patterns are matched against the source-tree-relative path of each
-regular file. The output MUST be a `cleanSourceWith`-filtered view of
-`src`.
+`goSourceFilter` MUST be implemented as a `builtins.path` invocation
+(the primitive that both `lib.cleanSourceWith` and
+`lib.sources.sourceByRegex` build on top of) where directories are
+always traversed and regex patterns are matched against the
+source-tree-relative path of each regular file. The output MUST be a
+store-path-coercible value (which is what `builtins.path` returns)
+suitable for direct use as `packages.<system>.go-pkgs` without
+`.outPath` coercion (see amarbel-llc/nixpkgs#38).
 
 ### Default keep-set
 
@@ -396,14 +398,15 @@ extras = [ "^doc/.*" "^VERSION$" ".*\\.tmpl$" ];
 ### Store-path naming
 
 `goSourceFilter` MUST preserve `src.name`. The resulting store path is
-named identically to the input `src` (this is `cleanSourceWith`'s
-default behavior). Producers that want a more diagnostic name (e.g.
-`${src.name}-go-source`) MAY wrap the output:
+named identically to the input `src` (`builtins.path`'s default
+behavior when `name` mirrors `src.name`). Producers that want a more
+diagnostic name (e.g. `${src.name}-go-source`) MAY rebuild the path
+with a different `name`:
 
 ```nix
-lib.cleanSourceWith {
+builtins.path {
   name = "${src.name}-go-source";
-  src = pkgs.goSourceFilter { inherit src; };
+  path = pkgs.goSourceFilter { inherit src; };
 }
 ```
 
