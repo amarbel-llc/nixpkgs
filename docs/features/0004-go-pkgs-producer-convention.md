@@ -1,5 +1,6 @@
 ---
-status: exploring
+status: superseded
+superseded-by: docs/rfcs/0001-flake-input-go_mod.md
 date: 2026-05-23
 promotion-criteria: |
   exploring → proposed: `mkGoPkgs` helper lands in this fork's overlay

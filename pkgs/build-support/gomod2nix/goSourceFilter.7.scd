@@ -89,10 +89,11 @@ pkgs.runCommand "${src.name}-go-source" { } ''
 
 *pkgs.goSourceFilterMiddleware* is a 1-line *src -> src* wrapper
 around *goSourceFilter*. It exists for composition with the (deferred)
-*mkGoPkgs.middlewares* pipeline:
+*mkGoPkgsWithMiddleware* pipeline (provisional name; see
+*RFC 0001 § Producers with codegen (deferred)*):
 
 ```
-packages.${system}.go-pkgs = pkgs.mkGoPkgs {
+packages.${system}.go-pkgs = pkgs.mkGoPkgsWithMiddleware {
   src = self;
   middlewares = [
     pkgs.goSourceFilterMiddleware
