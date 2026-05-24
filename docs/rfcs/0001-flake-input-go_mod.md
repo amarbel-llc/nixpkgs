@@ -272,30 +272,35 @@ Arguments:
 
 ### Producers without middleware
 
-A producer that ships hand-written Go with no codegen and no source
-filtering needs MAY use either of:
+A producer that ships hand-written Go with no codegen SHOULD publish:
 
 ```nix
-# Explicit, via helper (signals intent):
-packages.${system}.go-pkgs = pkgs.mkGoPkgs { src = self; };
-
-# Direct, bypassing the helper:
-packages.${system}.go-pkgs = self.outPath;
+packages.${system}.go-pkgs = pkgs.goSourceFilter { src = self; };
 ```
 
-Both are valid; `mkGoPkgs { src = self; middlewares = [ ]; }` is the
-identity transformation. The bare-`self.outPath` form is RECOMMENDED
-only for trivially small repos where the build closure tax of non-Go
-file edits is negligible; otherwise, producers SHOULD use
-`pkgs.goSourceFilter { src = self; }` to scope the closure to
-Go-relevant files (see § *Source filtering: `goSourceFilter`*).
+`goSourceFilter` returns a real derivation (see
+§ *Source filtering: `goSourceFilter`*), which satisfies every
+flake-output gate (`nix eval`, `nix build`, and `nix flake check`).
 
-> [!NOTE]
-> Bare `self` (without `.outPath`) is a flake attrset, which the
-> flake schema rejects in the `packages.<system>.<name>` slot
-> ("expected ... a derivation or path but found a set"). Coerce
-> via `.outPath` or use `pkgs.goSourceFilter { src = self; }`,
-> which already returns a path. See amarbel-llc/nixpkgs#38.
+Other forms that producers may be tempted to use have hidden gotchas:
+
+- `packages.${system}.go-pkgs = self;` — `self` is a flake attrset.
+  The flake-output schema rejects it ("expected ... a derivation or
+  path but found a set"). See amarbel-llc/nixpkgs#38.
+- `packages.${system}.go-pkgs = self.outPath;` — passes `nix build`
+  but fails `nix flake check` (which requires `lib.isDerivation`).
+  See amarbel-llc/nixpkgs#44.
+- `packages.${system}.go-pkgs = ./.;` — same issue as `self.outPath`.
+
+Producers that prefer an explicit no-filter, no-codegen identity MAY
+use the (deferred) `mkGoPkgs` helper once it exists:
+
+```nix
+packages.${system}.go-pkgs = pkgs.mkGoPkgs { src = self; };
+```
+
+`mkGoPkgs { src = self; middlewares = [ ]; }` is the identity
+transformation. Until `mkGoPkgs` lands, use `goSourceFilter` directly.
 
 ### Producers with middleware
 
