@@ -24,6 +24,13 @@ promotion-criteria: |
   `go.mod` edits to override the bridge) has been documented.
 ---
 
+> **Status:** the normative interface specification for the bridge
+> protocol now lives in [RFC 0001](../rfcs/0001-flake-input-go_mod.md).
+> This FDR is preserved for journey context, problem-statement
+> framing, and the POC findings from commit f99a3ff43278. For the
+> authoritative MUST/SHOULD/MAY contract on `goFlakeInputs`,
+> `mkGoEnv` parity, and multi-producer closures, see the RFC.
+
 # Bridge Go module deps from flake inputs
 
 ## Problem Statement
@@ -59,42 +66,7 @@ automatically, and `gomod2nix.toml` only tracks the *organic* surface.
 
 ## Interface
 
-Extend `buildGoApplication` (and `mkGoEnv`) with a `goFlakeInputs`
-argument:
-
-```nix
-goFlakeInputs = {
-  "github.com/amarbel-llc/dodder" = inputs.dodder;
-  "github.com/amarbel-llc/dagnabit" = inputs.dagnabit;
-};
-```
-
-Each entry maps a Go module path to a flake-input derivation. At
-nix-eval time, the builder injects synthetic `replace` directives that
-point at the flake input's store path, in parallel to the organic
-`goMod.replace` entries that `mkVendorEnv` already processes.
-
-Critically, the synthetic entries **do not require the source filesystem
-to contain a placeholder directory** — that's the failure mode the POC
-surfaced (see *POC findings* below). Synthetic targets are derivation
-references, not `pwd + "/..."` paths.
-
-Resolved sub-decisions (carried over from the prior FDR-0001 § Path A):
-
-1. **Merge primitive: `go mod edit -replace`.** Synthetic deps overlay
-   onto the organic `go.mod`; only flake-input-driven entries are
-   synthetic. Most projects have a mix — `cobra`, `golang.org/x/...`,
-   etc. stay organic. The version pin in the organic `require` line
-   becomes vestigial: the replace path wins at build time.
-2. **Inline derivation arg, not a manifest file.** Caller passes
-   `goFlakeInputs` directly to the builder; no separate
-   `flake-go-inputs.toml`. Single source of truth for synthetic versions
-   = the flake input rev (via `flake.lock`).
-3. **Local `go build` outside nix is unsupported.** All Go work happens
-   inside `nix develop` or via `nix build`. The merged `go.mod` is the
-   only file the build sees; no dual-path concerns. `mkGoEnv` and
-   `buildGoApplication` apply the same merge logic; `go.work`
-   indirection becomes unnecessary.
+See [RFC 0001 § Consumer interface](../rfcs/0001-flake-input-go_mod.md#consumer-interface-goflakeinputs).
 
 ## Examples
 
@@ -144,75 +116,7 @@ version) with a sentinel pseudo-version. Bumping dodder is now a
 
 ## Multi-producer closures: `follows` + passthru inheritance
 
-When a consumer depends on multiple flake inputs that themselves share
-a transitive Go dependency, two conventions keep the closure coherent.
-
-### Shared transitive deps: align with `follows`
-
-A consumer that pulls both `tap` and `dewey` as flake inputs — and where
-`tap` itself depends on `dewey` — should anchor `tap`'s view of dewey to
-the same input via `follows`:
-
-```nix
-inputs = {
-  dewey.url = "github:amarbel-llc/purse-first/libs/dewey";
-  tap = {
-    url = "github:amarbel-llc/tap";
-    inputs.dewey.follows = "dewey";   # tap's dewey is now madder's dewey
-  };
-};
-```
-
-`follows` is Nix's existing flake-level alignment mechanism; the bridge
-doesn't replicate or enforce version policy on top of it. Go's
-module-path encoding (`X` vs `X/v2`) already makes cross-major substitution
-structurally impossible, and within-cohort version mismatches surface as
-ordinary compile errors via `-mod=vendor`. The build is the
-authoritative check; `follows` ensures the inputs align before the
-build even runs.
-
-### Producer-side passthru inheritance
-
-A producer flake that itself uses `goFlakeInputs` to source its Go
-modules can expose those declarations to consumers via
-`passthru.goFlakeInputs` on its `go-pkgs` derivation. The bridge reads
-each direct flake-input's `passthru.goFlakeInputs` and unions the
-entries into the consumer's merged map (depth-1; consumer-declared
-entries win on conflict). When combined with `follows` above, the
-inherited entries naturally resolve to the same flake inputs the
-consumer already has, with no extra declaration:
-
-```nix
-# producer (e.g. tap)
-packages.${system}.go-pkgs = pkgs.mkGoPkgs {
-  src = self;
-  goFlakeInputs = {
-    "github.com/amarbel-llc/purse-first/libs/dewey" = inputs.dewey;
-  };
-};
-# mkGoPkgs attaches passthru.goFlakeInputs automatically — see FDR-0004.
-
-# consumer (e.g. madder)
-goFlakeInputs = {
-  "github.com/amarbel-llc/tap/go" = {
-    src = inputs.tap.packages.${system}.go-pkgs;
-    subPath = "go";
-  };
-  # The dewey entry is INHERITED from tap's passthru — no need to
-  # redeclare here. With inputs.tap.inputs.dewey.follows = "dewey",
-  # the inherited entry points at the consumer's dewey input.
-};
-```
-
-The depth-1 limit is intentional: deeper chains reintroduce N×M
-declaration overhead in different shape, and full transitive resolution
-is the FOD-regen path documented as deferred work below. For
-deeply-nested closures today, the consumer declares each direct
-producer's flake input and `follows`-aligns shared deps; the bridge
-inherits one level of passthru and that's enough for the fork's
-current shapes.
-
-Tracking: [amarbel-llc/nixpkgs#36](https://github.com/amarbel-llc/nixpkgs/issues/36).
+See [RFC 0001 § Multi-producer closures](../rfcs/0001-flake-input-go_mod.md#multi-producer-closures-follows--passthru-inheritance).
 
 ## POC findings (commit f99a3ff43278, `zz-pocs/goflake-poc/`)
 
@@ -288,45 +192,19 @@ Tracking issue: [amarbel-llc/nixpkgs#32](https://github.com/amarbel-llc/nixpkgs/
 
 ## Limitations
 
-- **Caller manages the `require` line in `go.mod`.** First-cut scope
-  has the caller keep `require <module> v0.0.0-<sentinel>` in `go.mod`
-  manually, parallel to declaring `goFlakeInputs`. Auto-injecting the
-  `require` via `go mod edit -require` at eval time is a follow-up
-  ergonomics fix; the bridge mechanic itself doesn't depend on it.
+For the protocol-level limitations (caller-managed `require` line,
+transitive deps, source-only inputs, no `go build` outside Nix,
+`mkGoEnv` parity), see
+[RFC 0001 § Limitations](../rfcs/0001-flake-input-go_mod.md#limitations).
 
-- **Transitive deps of the flake input.** A flake input's organic
-  transitive deps come in through its `gomod2nix.toml`, which the
-  bridge unions with the consumer's (consumer wins on conflict). For
-  the flake-input-driven transitive deps (i.e. when the producer itself
-  uses `goFlakeInputs`), the bridge inherits the producer's
-  `passthru.goFlakeInputs` at depth-1; see *Multi-producer closures*
-  above. Deeper-than-one-level inheritance — full FOD-regen of the
-  merged module set — is deferred until a closure surfaces that
-  depth-1 + consumer redeclaration cannot express. Resolution captured
-  in [amarbel-llc/nixpkgs#36](https://github.com/amarbel-llc/nixpkgs/issues/36).
-
-- **Source-only inputs assumed.** `goFlakeInputs` entries are expected
-  to be derivations whose output is a Go module source tree (own
-  `go.mod`, importable packages). Pre-built binaries or non-Go outputs
-  are out of scope.
-
-- **No `go build` outside Nix.** Inherited from sub-decision 3 above —
-  this fork's Go projects already require `nix develop` for the
-  toolchain; the bridge keeps that constraint. Editor / language-server
-  workflows that parse `go.mod` directly may need the merged form
-  materialized into the workspace; the materialization step is a
-  follow-up.
-
-- **`mkGoEnv` parity.** The bridge must be present in *both*
-  `buildGoApplication` and `mkGoEnv` for devshells to see the same
-  module graph as `nix build`. Implementing only the build-side leaves
-  `nix develop` with a different view, which would silently reintroduce
-  the lockstep-drift class through the back door.
+POC-specific items that surfaced during this FDR's exploration and
+remain to verify against any landed implementation:
 
 - **No interaction yet defined with `buildGoRace` / `buildGoCover`.**
   These wrappers `overrideAttrs` on a `buildGoApplication`-produced
   derivation. They *should* be unaffected by `goFlakeInputs` (the merge
-  happens before they wrap), but this needs concrete verification.
+  happens before they wrap), but this needs concrete verification
+  against the bridge as implemented.
 
 ## More Information
 
