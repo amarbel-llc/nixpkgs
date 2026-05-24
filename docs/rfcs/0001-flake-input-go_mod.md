@@ -77,10 +77,11 @@ For the purposes of this RFC:
 - **`go-pkgs-test`** — the test-superset companion of `go-pkgs`. Same
   prod surface plus `*_test.go` and `testdata/**`. Specified
   normatively in § *Producer interface*.
-- **`gomod.nix`** — the conventional colocation file on the consumer
-  side that lifts the `goFlakeInputs` attrset out of the
-  `buildGoApplication` call. Specified normatively in §
-  *Consumer convention: `gomod.nix` colocation*.
+- **`gomod.nix`** — the conventional colocation file that is the
+  Nix interface to `go.mod`. Carries the producer's `mkGoPkgs`
+  arguments and/or the consumer's `goFlakeInputs` attrset; mixed
+  flakes (producer + consumer) carry both. Specified normatively in
+  § *The `gomod.nix` convention*.
 
 ## Protocol overview
 
@@ -564,31 +565,74 @@ packages.${system}.go-pkgs = pkgs.mkGoPkgs {
 };
 ```
 
-## Consumer convention: `gomod.nix` colocation
+## The `gomod.nix` convention
 
-### Recommended shape
+`gomod.nix` is the **Nix interface to `go.mod`** — a single colocation
+file that captures the flake's Go-side surface in Nix terms.
+Symmetric with `go.mod`'s role on the Go side: every Go-flake that
+participates in this protocol SHOULD lift its Nix-Go wiring into
+`gomod.nix` (or `go/gomod.nix` for polyglot repos), and `flake.nix`
+imports it.
 
-When a consumer bridges two or more Go module deps through
-`goFlakeInputs`, the attrset SHOULD be lifted into a sibling file
-named `gomod.nix` (or, for polyglot repos that keep their Go module
-under a subdirectory, `go/gomod.nix`). Single-dep bridges MAY remain
-inline in the `buildGoApplication` call; the colocation convention
-exists to reduce duplication and surface drift, both of which only
-matter at multi-dep scale.
+A `gomod.nix` file MAY contain either or both of:
 
-`gomod.nix` MUST be a function from flake inputs (plus `system`) to an
-attrset that matches the `goFlakeInputs` schema defined in §
-*Consumer interface: `goFlakeInputs`*. The file MUST NOT depend on
-state outside its arguments; it MUST be importable from any
-`buildGoApplication` or `mkGoEnv` call in the same flake.
+- **Producer half** — the `mkGoPkgs` call arguments (`src`, `extras`,
+  `testExtras`) for the flake's own Go-source publication.
+- **Consumer half** — the `goFlakeInputs` attrset for cross-flake Go
+  module dependencies.
 
-### Example
+A pure-producer flake's `gomod.nix` carries only the producer block;
+a pure-consumer's carries only the consumer block; a mixed flake
+(producer of its own Go source AND consumer of sibling-flake Go
+modules — most adopters in this fork) carries both.
+
+`gomod.nix` MUST be a function from its dependencies (`pkgs`, `src`,
+flake inputs, `system`) to either a single attrset (single-half) or
+an attrset containing `goPkgs` / `goFlakeInputs` / both. The file
+MUST NOT depend on state outside its arguments; it MUST be importable
+from any `buildGoApplication`, `mkGoEnv`, or `mkGoPkgs` call in the
+same flake.
+
+### Producer-half shape
 
 ```nix
-# go/gomod.nix
+# gomod.nix — pure-producer flake
+{ pkgs, src }:
+pkgs.mkGoPkgs {
+  inherit src;
+  extras = [ ];        # optional: extras for both outputs
+  testExtras = [ ];    # optional: extras only for go-pkgs-test
+}
+```
+
+Then in `flake.nix`:
+
+```nix
+let
+  goPkgs = import ./gomod.nix { inherit pkgs; src = self; };
+in {
+  packages.${system} = {
+    inherit (goPkgs) go-pkgs go-pkgs-test;
+    # Self-consumption SHOULD: build against own go-pkgs-test
+    default = pkgs.buildGoApplication {
+      src = goPkgs.go-pkgs-test;
+      pwd = goPkgs.go-pkgs-test;
+      modules = ./gomod2nix.toml;
+    };
+  };
+}
+```
+
+For polyglot repos with Go under `go/`, the file lives at
+`go/gomod.nix` and `pwd` / `src` pass `self + "/go"`.
+
+### Consumer-half shape
+
+```nix
+# gomod.nix — pure-consumer flake (or polyglot's go/gomod.nix)
 { tap, tommy, system }: {
   "github.com/amarbel-llc/tap/go" = {
-    src = tap;
+    src = tap.packages.${system}.go-pkgs;
     subPath = "go";
   };
   "github.com/amarbel-llc/tommy" = {
@@ -597,11 +641,13 @@ state outside its arguments; it MUST be importable from any
 }
 ```
 
-Call sites then thread the imported attrset through every Go builder
-call:
+Single-dep bridges MAY remain inline in the `buildGoApplication`
+call; the colocation convention exists to reduce duplication and
+surface drift, both of which only matter at multi-dep scale.
+
+Call sites in `flake.nix`:
 
 ```nix
-# flake.nix
 let
   goFlakeInputs = import ./go/gomod.nix {
     inherit (inputs) tap tommy;
@@ -627,35 +673,99 @@ in {
 }
 ```
 
+### Mixed shape (producer + consumer)
+
+A flake that is both a producer (publishes its own `go-pkgs`) and a
+consumer (bridges sibling flakes' Go modules) puts both halves in one
+`gomod.nix`:
+
+```nix
+# gomod.nix — mixed flake (e.g. madder, dodder, maneater)
+{ pkgs, src, tap, tommy, purse-first, system }: {
+  goPkgs = pkgs.mkGoPkgs {
+    inherit src;
+    extras = [ ];
+    testExtras = [ ];
+  };
+
+  goFlakeInputs = {
+    "github.com/amarbel-llc/tap/go" = {
+      src = tap.packages.${system}.go-pkgs;
+      subPath = "go";
+    };
+    "github.com/amarbel-llc/tommy" = {
+      src = tommy.packages.${system}.go-pkgs;
+    };
+    "github.com/amarbel-llc/purse-first/libs/go-mcp" = {
+      src = purse-first.packages.${system}.go-pkgs;
+      subPath = "libs/go-mcp";
+    };
+  };
+}
+```
+
+Then in `flake.nix`:
+
+```nix
+let
+  gomod = import ./gomod.nix {
+    inherit pkgs system;
+    src = self;
+    inherit (inputs) tap tommy purse-first;
+  };
+in {
+  packages.${system} = {
+    inherit (gomod.goPkgs) go-pkgs go-pkgs-test;
+    default = pkgs.buildGoApplication {
+      src = gomod.goPkgs.go-pkgs-test;
+      pwd = gomod.goPkgs.go-pkgs-test;
+      modules = ./gomod2nix.toml;
+      inherit (gomod) goFlakeInputs;
+    };
+  };
+
+  devShells.${system}.default = pkgs.mkShell {
+    inputsFrom = [
+      (pkgs.mkGoEnv {
+        pwd = ./.;
+        inherit (gomod) goFlakeInputs;
+      })
+    ];
+  };
+}
+```
+
 ### Threading
 
 Every `buildGoApplication` and `mkGoEnv` call that consumes the
-consumer's `gomod2nix.toml` MUST receive the same `goFlakeInputs`
-value. The recommended idiom is `inherit goFlakeInputs;` at each call
-site, with the single `goFlakeInputs` binding shared from the
-top-level `let`. Missing call sites silently resurrect lockstep drift:
-the build sees one set of replace targets, the devshell sees another.
-See issue
-[amarbel-llc/nixpkgs#41](https://github.com/amarbel-llc/nixpkgs/issues/41)
-for proposed lint coverage of this failure mode.
+flake's `gomod2nix.toml` MUST receive the same `goFlakeInputs`
+value. The recommended idiom is `inherit (gomod) goFlakeInputs;` at
+each call site, with the single binding shared from the top-level
+`let`. Missing call sites silently resurrect lockstep drift: the
+build sees one set of replace targets, the devshell sees another.
+See [amarbel-llc/nixpkgs#41](https://github.com/amarbel-llc/nixpkgs/issues/41)
+for proposed lint coverage.
 
 ### Why this convention exists
 
-Three reasons motivate the colocation pattern:
+Four reasons motivate the `gomod.nix` colocation pattern:
 
-1. **Discoverability.** `cat go/gomod.nix` answers "which sibling Go
-   modules does this consumer bridge?" without scanning the flake
-   outputs.
-2. **Drift surface.** With every `buildGoApplication` and `mkGoEnv`
-   call importing the same `gomod.nix`, divergence between call sites
-   becomes a single `grep` target: any call lacking
-   `inherit goFlakeInputs;` is the bug.
-3. **Symmetry with the producer side.** Producers publish a single
-   `mkGoPkgs` call (which emits the dual outputs); consumers publish
-   one `gomod.nix` file. The protocol's two halves each have a single
-   conventional location, which makes adoption mechanical: producers
-   know where to filter source, consumers know where to declare
-   bridges.
+1. **Mirror of `go.mod`.** Every Go-flake that participates in this
+   protocol has a single Nix-side file that mirrors `go.mod`'s
+   semantics: what this flake publishes (producer) and what it
+   depends on through Nix (consumer). The mental model is uniform
+   across producers, consumers, and mixed flakes.
+2. **Discoverability.** `cat gomod.nix` answers both "which sibling
+   Go modules does this flake bridge?" and "how does this flake
+   filter its own Go source?" without scanning the entire
+   `flake.nix`.
+3. **Drift surface.** With every `buildGoApplication` and `mkGoEnv`
+   call importing the same `gomod.nix` binding, divergence between
+   call sites becomes a single `grep` target: any call lacking
+   `inherit (gomod) goFlakeInputs;` is the bug.
+4. **Symmetric file naming.** Producers, consumers, and mixed flakes
+   all use the same filename. Adopters don't have to think about
+   what file to look in based on which half they're working on.
 
 ## Multi-producer closures: `follows` + passthru inheritance
 
@@ -906,7 +1016,7 @@ be revisited as the protocol promotes through `proposed → experimental
 - [nixpkgs#40 — filtered-source `go-pkgs` over bare `self`](https://github.com/amarbel-llc/nixpkgs/issues/40)
   surfaced the `goSourceFilter` need.
 - [nixpkgs#41 — linter for missing `goFlakeInputs` threading](https://github.com/amarbel-llc/nixpkgs/issues/41)
-  follow-up enforcement gap referenced from § *Consumer convention*.
+  follow-up enforcement gap referenced from § *The `gomod.nix` convention*.
 - [nixpkgs#46 — split `go-pkgs` output: `mkGoPkgs` emitting `{ go-pkgs, go-pkgs-test }`](https://github.com/amarbel-llc/nixpkgs/issues/46)
   surfaced the audience-split problem (prod consumers vs. self-consumption /
   test runners) and motivated the dual-output amendment now reflected in
