@@ -79,7 +79,7 @@
 
   :::
 */
-{ pkgs, lib, bun, fetchBunDeps, eslintCache }:
+{ pkgs, lib, bun, fetchBunDeps, eslintCache, mkWrapper }:
 
 let
   # Map a .ts/.tsx/.mts/.cts basename to .js
@@ -156,35 +156,6 @@ let
       dontInstall = true;
       dontFixup = true;
     };
-
-  # Shared: create a wrapper script for a single binary.
-  # The bundle derivation is exposed as a passthru attr so callers
-  # (e.g. pkgs.testers.testBuildFailure') can target the bundle's own
-  # builder — failures inside the bundle propagate as build-input
-  # failures to the wrapper, which testBuildFailure cannot catch.
-  mkWrapper =
-    {
-      name,
-      bundle,
-      jsFile,
-      runtimeInputs ? [ ],
-      runtimeEnv ? { },
-    }:
-    let
-      envExports = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") runtimeEnv
-      );
-      pathSetup = lib.optionalString (runtimeInputs != [ ]) ''
-        export PATH="${lib.makeBinPath runtimeInputs}:$PATH"
-      '';
-      wrapper = pkgs.writeShellScriptBin name ''
-        ${envExports}
-        ${pathSetup}
-        unset LD_LIBRARY_PATH
-        exec ${bun}/bin/bun ${bundle}/${jsFile} "$@"
-      '';
-    in
-    wrapper // { passthru = (wrapper.passthru or { }) // { inherit bundle; }; };
 
 in
 {

@@ -67,6 +67,8 @@ let
 
   writeBunScriptBin = import ./write-bun-script-bin.nix { inherit pkgs bun; };
 
+  mkWrapper = import ./mk-wrapper.nix { inherit pkgs lib bun; };
+
   # Lint stack: materialized once per (eslint, plugin, parser) version
   # triple and reused by every buildBunBinary / buildZxScript bundle.
   # Bumps go through `nix run .#regen-bun2nix-lint-stack` at the flake
@@ -82,11 +84,11 @@ let
   eslintCache = args.eslintCache or defaultEslintCache;
 
   bunBinaryBuilders = import ./build-bun-binary.nix {
-    inherit pkgs lib bun fetchBunDeps eslintCache;
+    inherit pkgs lib bun fetchBunDeps eslintCache mkWrapper;
   };
 
   zxScriptBuilder = import ./build-zx-script.nix {
-    inherit pkgs lib bun fetchBunDeps eslintCache;
+    inherit pkgs lib bun fetchBunDeps eslintCache mkWrapper;
   };
 
 in

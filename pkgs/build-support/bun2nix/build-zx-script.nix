@@ -95,7 +95,7 @@
 
   :::
 */
-{ pkgs, lib, bun, fetchBunDeps, eslintCache }:
+{ pkgs, lib, bun, fetchBunDeps, eslintCache, mkWrapper }:
 
 let
   # -- Helpers --
@@ -235,30 +235,6 @@ let
       };
       inherit packages;
     };
-
-  # Create a wrapper script for a single binary.
-  mkWrapper =
-    {
-      name,
-      bundle,
-      jsFile,
-      runtimeInputs ? [ ],
-      runtimeEnv ? { },
-    }:
-    let
-      envExports = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") runtimeEnv
-      );
-      pathSetup = lib.optionalString (runtimeInputs != [ ]) ''
-        export PATH="${lib.makeBinPath runtimeInputs}:$PATH"
-      '';
-    in
-    pkgs.writeShellScriptBin name ''
-      ${envExports}
-      ${pathSetup}
-      unset LD_LIBRARY_PATH
-      exec ${bun}/bin/bun ${bundle}/${jsFile} "$@"
-    '';
 
   buildZxScript =
     {
