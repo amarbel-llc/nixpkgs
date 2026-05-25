@@ -128,11 +128,18 @@
             bun = pkgs.bun;
             bun2nix = bun2nixCli;
           };
+          benchBunStartup = import ./pkgs/build-support/bun2nix/bench/bench-bun-startup.nix {
+            inherit pkgs;
+          };
         in
         {
           regen-bun2nix-lint-stack = {
             type = "app";
             program = "${regenLintStack}/bin/regen-bun2nix-lint-stack";
+          };
+          bench-bun-startup = {
+            type = "app";
+            program = "${benchBunStartup}/bin/bench-bun-startup";
           };
         }
       );
