@@ -143,6 +143,44 @@ pkgs.mkGoPkgs {
 
 See *RFC 0001 § The gomod.nix convention* for the normative spec.
 
+# //go:embed ASSETS
+
+Any file that *//go:embed* references but that the default keep-set
+doesn't already cover (i.e. anything other than *.go*, the module
+files, *testdata/**)* must be added to *extras* (prod and test) or
+*testExtras* (test only) by hand. The failure mode is loud — the
+build fails with *pattern X: no matching files found* — but the fix
+is split across two files, which is exactly the toil RFC 0001 set
+out to eliminate.
+
+A typical *gomod.nix* for a producer that *//go:embed*s template,
+asset, and test fixture files:
+
+```
+pkgs.mkGoPkgs {
+  inherit src;
+  extras = [
+    "^cmd/example/templates/.*$"   # //go:embed templates/*.tmpl
+    "^cmd/example/assets/.*$"      # //go:embed all:assets
+  ];
+  testExtras = [
+    "^cmd/example/fixtures/.*$"    # //go:embed in *_test.go
+  ];
+}
+```
+
+Each regex is matched against source-tree-relative paths (no leading
+slash). Patterns inside *testdata/* are kept automatically by
+*go-pkgs-test* — they only need *testExtras* when they live outside
+the convention.
+
+Auto-deriving *extras* from *//go:embed* directives is parked on
+amarbel-llc/nixpkgs#60. A regex-based scanner in Nix is too fragile
+(quoted patterns, build tags, comments-in-strings), and a Go-AST
+helper is heavier than the manual two-line tax it would replace.
+The right place to revisit this is a future go2nix integration that
+already parses the AST for other reasons.
+
 # RELATIONSHIP TO goSourceFilter
 
 *pkgs.goSourceFilter* is the lower-level primitive that filters a

@@ -42,6 +42,27 @@ let
     # by the relaxed isModuleFile predicate (#47).
     mkdir -p $out/internal/foo/testdata/fixturemod
     echo "module example.com/fixturemod" > $out/internal/foo/testdata/fixturemod/go.mod
+
+    # #60: //go:embed prod assets — the asset under templates/ must be
+    # kept in both outputs when the caller passes a matching `extras`
+    # regex. Until go2nix can derive these from the AST, adopters
+    # maintain `extras` by hand alongside the //go:embed directive.
+    mkdir -p $out/cmd/example/templates
+    echo "package main" > $out/cmd/example/embed_prod.go
+    echo "" >> $out/cmd/example/embed_prod.go
+    echo "//go:embed templates/hello.tmpl" >> $out/cmd/example/embed_prod.go
+    echo "var _ = \"stub\"" >> $out/cmd/example/embed_prod.go
+    echo "hi" > $out/cmd/example/templates/hello.tmpl
+
+    # #60: //go:embed test-only assets — the directive lives in a
+    # *_test.go file and the asset is needed only by go-pkgs-test, so
+    # the caller routes it through `testExtras` rather than `extras`.
+    mkdir -p $out/cmd/example/fixtures
+    echo "package main" > $out/cmd/example/embed_more_test.go
+    echo "" >> $out/cmd/example/embed_more_test.go
+    echo "//go:embed fixtures/cases.json" >> $out/cmd/example/embed_more_test.go
+    echo "var _ = \"stub\"" >> $out/cmd/example/embed_more_test.go
+    echo "{}" > $out/cmd/example/fixtures/cases.json
   '';
 
   built = pkgs.mkGoPkgs { src = fixture; };
@@ -49,6 +70,15 @@ let
     src = fixture;
     extras = [ "^README\\.md$" ];
     testExtras = [ "^.*\\.fixtures$" ]; # synthetic, fixture has none
+  };
+
+  # #60: documents the manual //go:embed pattern. Mirrors the example
+  # in mkGoPkgs(7). When go2nix-style AST analysis is available these
+  # patterns should come for free.
+  builtWithEmbedExtras = pkgs.mkGoPkgs {
+    src = fixture;
+    extras = [ "^cmd/example/templates/.*$" ];
+    testExtras = [ "^cmd/example/fixtures/.*$" ];
   };
 
   # #49: name override + go.mod inference.
@@ -96,6 +126,24 @@ let
 
   extrasProdHasReadme = builtins.pathExists "${builtWithExtras.go-pkgs}/README.md";
   extrasTestHasReadme = builtins.pathExists "${builtWithExtras.go-pkgs-test}/README.md";
+
+  # #60: default mkGoPkgs drops //go:embed assets — they only survive
+  # when the caller supplies a matching `extras` / `testExtras` regex.
+  defaultProdHasEmbedTmpl =
+    builtins.pathExists "${built.go-pkgs}/cmd/example/templates/hello.tmpl";
+  defaultTestHasEmbedJson =
+    builtins.pathExists "${built.go-pkgs-test}/cmd/example/fixtures/cases.json";
+
+  # #60: manual extras for //go:embed — the recommended workaround
+  # while go2nix-style AST scanning is out of scope.
+  embedExtrasProdHasTmpl =
+    builtins.pathExists "${builtWithEmbedExtras.go-pkgs}/cmd/example/templates/hello.tmpl";
+  embedExtrasProdHasTestJson =
+    builtins.pathExists "${builtWithEmbedExtras.go-pkgs}/cmd/example/fixtures/cases.json";
+  embedExtrasTestHasTmpl =
+    builtins.pathExists "${builtWithEmbedExtras.go-pkgs-test}/cmd/example/templates/hello.tmpl";
+  embedExtrasTestHasJson =
+    builtins.pathExists "${builtWithEmbedExtras.go-pkgs-test}/cmd/example/fixtures/cases.json";
 in
 pkgs.runCommand "mk-go-pkgs-tests"
   {
@@ -140,6 +188,26 @@ pkgs.runCommand "mk-go-pkgs-tests"
       # extras applies to BOTH outputs.
       (assert' "extras: prod gets README.md when in extras" extrasProdHasReadme)
       (assert' "extras: test gets README.md when in extras" extrasTestHasReadme)
+
+      # #60: default mkGoPkgs drops //go:embed assets just like any
+      # other non-Go file — adopters MUST supply extras explicitly
+      # until go2nix-style AST scanning can derive them.
+      (assert' "#60: prod drops //go:embed asset without extras"
+        (! defaultProdHasEmbedTmpl))
+      (assert' "#60: test drops //go:embed asset without testExtras"
+        (! defaultTestHasEmbedJson))
+
+      # #60: manual extras pattern — prod embeds route through `extras`
+      # (kept in both outputs); test-only embeds route through
+      # `testExtras` (kept only in go-pkgs-test).
+      (assert' "#60: extras keep prod //go:embed asset in go-pkgs"
+        embedExtrasProdHasTmpl)
+      (assert' "#60: testExtras do NOT leak test embed asset into go-pkgs"
+        (! embedExtrasProdHasTestJson))
+      (assert' "#60: extras keep prod //go:embed asset in go-pkgs-test (superset)"
+        embedExtrasTestHasTmpl)
+      (assert' "#60: testExtras keep test //go:embed asset in go-pkgs-test"
+        embedExtrasTestHasJson)
 
       # #49: name override + go.mod inference + src.name fallthrough.
       # Precedence: explicit `name` → `src.name` → go.mod inferred → "source".
