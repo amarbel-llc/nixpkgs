@@ -175,3 +175,19 @@ sync-bun-tree src dst ref="master":
         | base64 -d > "$out"
       done
     gum log --level info "sync-bun-tree: copied {{ src }} -> {{ dst }}"
+
+# [explore] Sync a single file from amarbel-llc/bun via gh API.
+# Companion to sync-bun-tree for cases where only one file is wanted
+# (e.g. one ADR out of a docs/decisions tree, one script out of scripts/).
+# dst is a full file path, so renames are natural:
+#   just sync-bun-file docs/decisions/0001-foo.md docs/decisions/0002-foo.md
+[group: 'explore']
+sync-bun-file src dst ref="master":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{ dst }}")"
+    gum log --level info "fetching {{ src }}"
+    gh api "repos/amarbel-llc/bun/contents/{{ src }}?ref={{ ref }}" \
+      --jq '.content' \
+    | base64 -d > "{{ dst }}"
+    gum log --level info "sync-bun-file: copied {{ src }} -> {{ dst }}"
