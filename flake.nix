@@ -68,6 +68,7 @@
             claude-code
             gomod2nix
             gomod2nix-man
+            update-zx-deps
             ;
           nix-man = pkgs.nix.man;
           default = pkgs.claude-code;
@@ -140,6 +141,10 @@
           bench-bun-startup = {
             type = "app";
             program = "${benchBunStartup}/bin/bench-bun-startup";
+          };
+          update-zx-deps = {
+            type = "app";
+            program = "${pkgs.update-zx-deps}/bin/update-zx-deps";
           };
         }
       );

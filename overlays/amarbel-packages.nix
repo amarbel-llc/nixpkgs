@@ -23,6 +23,11 @@ final: prev: {
     writeBunScriptBin
     ;
 
+  # Resolve + rewrite SRI hashes for ///!dep directives in zx scripts
+  # consumed by buildZxScriptFromFile. Exposed flat (not nested under
+  # bun2nix.update-zx-deps) to match the rest of this overlay.
+  update-zx-deps = final.callPackage ../pkgs/build-support/bun2nix/update-zx-deps { };
+
   inherit
     (final.callPackage ../pkgs/build-support/gomod2nix { })
     buildGoApplication

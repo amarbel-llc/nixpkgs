@@ -24,7 +24,7 @@ check-changed:
 
     # amarbel-packages overlay: always check these (not discoverable by filename).
     # Checked separately since some are functions, not derivations.
-    amarbel_pkgs=(fetchGgufModel buildBunBinary buildBunBinaries buildZxScript buildZxScriptFromFile eslintCache fetchBunDeps mkBunDerivation writeBunApplication writeBunScriptBin gomod2nix gomod2nix-man)
+    amarbel_pkgs=(fetchGgufModel buildBunBinary buildBunBinaries buildZxScript buildZxScriptFromFile eslintCache fetchBunDeps mkBunDerivation writeBunApplication writeBunScriptBin gomod2nix gomod2nix-man update-zx-deps)
     for pkg in "${amarbel_pkgs[@]}"; do
         gum log --level info "evaluating $pkg"
         if nix eval "path:.#$pkg" > /dev/null 2>&1; then
