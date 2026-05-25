@@ -38,12 +38,16 @@
 let
   # Build a derivation containing the files of `src` that satisfy
   # `predicate`, always traversing directories. The predicate receives
-  # the source-tree-relative path of each non-directory file.
+  # the source-tree-relative path of each non-directory file. Optional
+  # `passthru` is forwarded to the resulting derivation so callers can
+  # attach metadata (e.g. `goFlakeInputs` per RFC 0001 § Producer-side
+  # passthru inheritance, addressing amarbel-llc/nixpkgs#36).
   filteredTree =
     {
       name,
       src,
       predicate,
+      passthru ? { },
     }:
     let
       origSrc = if src ? origSrc then src.origSrc else src;
@@ -61,6 +65,7 @@ let
     runCommand name {
       preferLocalBuild = true;
       allowSubstitutes = false;
+      inherit passthru;
     } ''
       cp -r ${filteredPath} $out
     '';
@@ -91,6 +96,13 @@ let
       # Extra regex patterns added ONLY to go-pkgs-test (e.g. fixtures
       # outside the testdata/ convention).
       testExtras ? [ ],
+      # OPTIONAL declarations of this producer's own cross-flake Go
+      # module dependencies (same shape as consumer-side
+      # `goFlakeInputs`). When non-empty, attached as
+      # `passthru.goFlakeInputs` on BOTH outputs so downstream
+      # consumers' bridge can union them at depth-1 per RFC 0001
+      # § Multi-producer closures (amarbel-llc/nixpkgs#36).
+      goFlakeInputs ? { },
     }:
     let
       # Infer a name from go.mod's `module <path>` directive, taking
@@ -172,17 +184,23 @@ let
         || isTestGoFile relPath
         || isTestdataFile relPath
         || isTestExtra relPath;
+
+      # Surface goFlakeInputs through passthru only when the caller
+      # actually declared cross-flake deps. Skipping the attribute
+      # (rather than attaching {}) keeps consumers' `?` checks
+      # well-defined for adopters who never bridge.
+      passthru = lib.optionalAttrs (goFlakeInputs != { }) { inherit goFlakeInputs; };
     in
     {
       go-pkgs = filteredTree {
         name = "${baseName}-go-pkgs";
-        inherit src;
+        inherit src passthru;
         predicate = prodPredicate;
       };
 
       go-pkgs-test = filteredTree {
         name = "${baseName}-go-pkgs-test";
-        inherit src;
+        inherit src passthru;
         predicate = testPredicate;
       };
     };

@@ -356,10 +356,12 @@ The two outputs always cover the full `src` tree; consumers control
 per-consumer slicing through the `subPath` attribute on
 `goFlakeInputs` entries.
 
-`mkGoPkgs` MAY attach a `passthru.goFlakeInputs` declaration to its
-outputs in a future revision (currently deferred); see
+`mkGoPkgs` attaches `passthru.goFlakeInputs` to both outputs when the
+caller passes a non-empty `goFlakeInputs` argument. The attribute is
+omitted entirely when the producer has no cross-flake deps so
+consumers can probe `passthru ? goFlakeInputs` unambiguously. See
 § *Multi-producer closures: `follows` + passthru inheritance* for how
-transitive inheritance interacts with the producer side.
+the consumer-side bridge unions these declarations at depth-1.
 
 ### Producers without middleware
 
@@ -824,10 +826,13 @@ derivations. When both outputs are published, the producer SHOULD
 attach the same `passthru.goFlakeInputs` to both so that consumers
 inheriting through either output see the same declarations.
 
-> **Implementation status:** automatic passthru attachment via
-> `mkGoPkgs` is deferred (see § *`mkGoPkgs` helper*). Until a future
-> revision adds it, producers attach the passthru manually by setting
-> it on the inline-built derivations.
+> **Implementation status:** `mkGoPkgs` accepts a `goFlakeInputs`
+> argument that attaches `passthru.goFlakeInputs` to both outputs;
+> the consumer-side bridge in `internals.nix` unions inherited
+> entries at depth-1 via `inheritedGoFlakeInputs`. An advisory
+> coverage warning (eval-time check that the producer's `go.mod`
+> requires are covered by the consumer's merged map) is a separate
+> follow-up.
 
 Implementations of the bridge MUST read each direct flake-input's
 `passthru.goFlakeInputs` and union the entries into the consumer's

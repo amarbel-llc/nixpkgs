@@ -62,6 +62,36 @@ let
         ''
       );
 
+  # Read `passthru.goFlakeInputs` from each direct producer in a
+  # consumer's `goFlakeInputs` map and union the inherited entries.
+  # Depth-1 only — the helper MUST NOT recurse into inherited entries'
+  # own passthru. Multi-level transitivity is deferred to the FOD-regen
+  # path tracked at amarbel-llc/nixpkgs#36; until that lands, deep
+  # closures resolve by the consumer declaring each direct producer's
+  # flake input and aligning shared deps via Nix flake `follows` (see
+  # RFC 0001 § Multi-producer closures).
+  #
+  # Both entry shapes from § Consumer interface are supported:
+  #   - bare derivation → look at `.passthru.goFlakeInputs`
+  #   - { src; subPath; } record → look at `.src.passthru.goFlakeInputs`
+  # Producers without a `passthru.goFlakeInputs` attribute contribute
+  # the empty map, never throw.
+  #
+  # The returned map is the *inherited* layer only; the caller layers
+  # consumer-declared entries on top via `inherited // consumer` so
+  # consumer wins on conflict per RFC 0001 § Producer-side passthru
+  # inheritance.
+  inheritedGoFlakeInputs =
+    goFlakeInputs:
+    builtins.foldl' (
+      acc: entry:
+      let
+        src = if entry ? src then entry.src else entry;
+        inherited = src.passthru.goFlakeInputs or { };
+      in
+      acc // inherited
+    ) { } (builtins.attrValues goFlakeInputs);
+
   # Union the consumer's gomod2nix.toml with each flake input's. On
   # conflict (same Go module path in both), consumer wins.
   #
@@ -123,14 +153,20 @@ let
         else
           null;
 
-      normalizedFlakeInputs = builtins.mapAttrs (_: normalizeFlakeInput) goFlakeInputs;
+      # #36: union depth-1 passthru.goFlakeInputs from each direct
+      # producer, with consumer-declared entries winning on conflict.
+      # When no producers expose passthru, `inherited` is empty and
+      # the merge degenerates to the consumer's own goFlakeInputs.
+      effectiveGoFlakeInputs = inheritedGoFlakeInputs goFlakeInputs // goFlakeInputs;
+      normalizedFlakeInputs = builtins.mapAttrs (_: normalizeFlakeInput) effectiveGoFlakeInputs;
       hasFlakeInputs = normalizedFlakeInputs != { };
 
       mergedGoModFile =
         if hasFlakeInputs && consumerGoMod != null then
           mkMergedGoMod {
             consumerGoMod = pwd + "/go.mod";
-            inherit go goFlakeInputs runCommand;
+            inherit go runCommand;
+            goFlakeInputs = effectiveGoFlakeInputs;
           }
         else
           null;
@@ -182,6 +218,7 @@ in
   inherit
     sentinelPseudoVersion
     normalizeFlakeInput
+    inheritedGoFlakeInputs
     mkMergedGoMod
     mergeGomod2nixTomls
     mkMergedView

@@ -81,6 +81,22 @@ let
     testExtras = [ "^cmd/example/fixtures/.*$" ];
   };
 
+  # #36: a producer that itself depends on cross-flake Go modules
+  # SHOULD attach its goFlakeInputs as passthru on both outputs so
+  # downstream consumers' bridge inherits them at depth-1.
+  passthruInputs = {
+    "github.com/inherited/dep1" = {
+      src = "/nix/store/dep1";
+      subPath = "go";
+    };
+    "github.com/inherited/dep2" = "/nix/store/dep2";
+  };
+  builtWithPassthru = pkgs.mkGoPkgs {
+    src = fixture;
+    goFlakeInputs = passthruInputs;
+  };
+  builtNoPassthru = pkgs.mkGoPkgs { src = fixture; }; # control
+
   # #49: name override + go.mod inference.
   # The fixture is a runCommand derivation, which has `.name =
   # "mk-go-pkgs-fixture"`. With no `name` override, `src.name`
@@ -208,6 +224,16 @@ pkgs.runCommand "mk-go-pkgs-tests"
         embedExtrasTestHasTmpl)
       (assert' "#60: testExtras keep test //go:embed asset in go-pkgs-test"
         embedExtrasTestHasJson)
+
+      # #36: producer-side passthru attachment. The bridge reads this
+      # at depth-1 on each direct producer; covered end-to-end in
+      # internals-merge-test.nix.
+      (assert' "#36: go-pkgs carries passthru.goFlakeInputs"
+        (builtWithPassthru.go-pkgs.passthru.goFlakeInputs == passthruInputs))
+      (assert' "#36: go-pkgs-test carries same passthru.goFlakeInputs"
+        (builtWithPassthru.go-pkgs-test.passthru.goFlakeInputs == passthruInputs))
+      (assert' "#36: omitting goFlakeInputs leaves passthru without the attr"
+        (! builtNoPassthru.go-pkgs.passthru ? goFlakeInputs))
 
       # #49: name override + go.mod inference + src.name fallthrough.
       # Precedence: explicit `name` → `src.name` → go.mod inferred → "source".
