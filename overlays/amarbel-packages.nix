@@ -28,6 +28,12 @@ final: prev: {
   # bun2nix.update-zx-deps) to match the rest of this overlay.
   update-zx-deps = final.callPackage ../pkgs/build-support/bun2nix/update-zx-deps { };
 
+  # Builder for the bun-dev shell. Downstream consumers (the bun fork
+  # itself, anyone wanting a Bun build environment) call this with
+  # extraPackages/extraShellHook/extraEnv knobs. The default
+  # `devShells.<system>.bun-dev` in flake.nix calls it with no extras.
+  mkBunDevShell = import ../pkgs/build-support/bun-dev-shell { pkgs = final; };
+
   inherit
     (final.callPackage ../pkgs/build-support/gomod2nix { })
     buildGoApplication

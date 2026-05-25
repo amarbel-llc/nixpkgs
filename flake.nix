@@ -23,15 +23,10 @@
     bun2nix.inputs.systems.follows = "systems";
     bun2nix.inputs.treefmt-nix.follows = "treefmt-nix";
 
-    # batman — bats wrapper with bundled support libraries, consumed by
-    # the bun-dev devShell. Does NOT follow nixpkgs-master: nokogiri
-    # (a ronn dep) fails to build against nixpkgs-unstable. See
-    # amarbel-llc/bats#100.
-    bats.url = "github:amarbel-llc/bats";
   };
 
   outputs =
-    { self, nixpkgs-master, bun2nix, bats, ... }:
+    { self, nixpkgs-master, bun2nix, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -198,142 +193,9 @@
         system:
         let
           pkgs = self.legacyPackages.${system};
-
-          # LLVM 21 — matches Bun's bootstrap.sh target.
-          llvm = pkgs.llvm_21;
-          clang = pkgs.clang_21;
-          lld = pkgs.lld_21;
-
-          # Node 24 — matches bootstrap.sh.
-          nodejs = pkgs.nodejs_24;
-
-          batman = bats.packages.${system}.batman;
-
-          bunDevPackages =
-            [
-              # Core build tools
-              pkgs.cmake
-              pkgs.ninja
-              pkgs.pkg-config
-              pkgs.ccache
-
-              # Compilers / toolchain
-              clang
-              llvm
-              lld
-              pkgs.gcc
-              pkgs.rustc
-              pkgs.cargo
-              pkgs.go
-
-              # Bun itself (for `bun bd`)
-              pkgs.bun
-
-              # Node.js 24
-              nodejs
-
-              # Other build deps from bootstrap.sh
-              pkgs.python3
-              pkgs.libtool
-              pkgs.ruby
-              pkgs.perl
-
-              # Libraries
-              pkgs.openssl
-              pkgs.zlib
-              pkgs.libxml2
-              pkgs.libiconv
-
-              # Dev tools
-              pkgs.git
-              pkgs.curl
-              pkgs.wget
-              pkgs.unzip
-              pkgs.xz
-
-              # Testing
-              batman
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-              # Debugging
-              pkgs.gdb
-
-              # Chromium runtime deps for Puppeteer tests (bootstrap.sh
-              # lines 1397-1483).
-              pkgs.libx11
-              pkgs.libxcb
-              pkgs.libxcomposite
-              pkgs.libxcursor
-              pkgs.libxdamage
-              pkgs.libxext
-              pkgs.libxfixes
-              pkgs.libxi
-              pkgs.libxrandr
-              pkgs.libxrender
-              pkgs.libxscrnsaver
-              pkgs.libxtst
-              pkgs.libxkbcommon
-              pkgs.mesa
-              pkgs.nspr
-              pkgs.nss
-              pkgs.cups
-              pkgs.dbus
-              pkgs.expat
-              pkgs.fontconfig
-              pkgs.freetype
-              pkgs.glib
-              pkgs.gtk3
-              pkgs.pango
-              pkgs.cairo
-              pkgs.alsa-lib
-              pkgs.at-spi2-atk
-              pkgs.at-spi2-core
-              pkgs.libgbm
-              pkgs.liberation_ttf
-              pkgs.atk
-              pkgs.libdrm
-              pkgs.libxshmfence
-              pkgs.gdk-pixbuf
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-              # New unified Apple SDK pattern.
-              pkgs.apple-sdk
-            ];
         in
         {
-          # Build environment for amarbel-llc/bun. Direct port of the
-          # Bun fork's `devShells.default` so the Bun fork can re-export
-          # `nixpkgs.devShells.${system}.bun-dev` and drop its own copy.
-          # FORTIFY_SOURCE is incompatible with Bun's build assumptions —
-          # disable it.
-          bun-dev =
-            (pkgs.mkShell.override { stdenv = pkgs.clangStdenv; })
-              {
-                packages = bunDevPackages;
-                hardeningDisable = [ "fortify" ];
-
-                shellHook =
-                  ''
-                    export CC="${pkgs.lib.getExe clang}"
-                    export CXX="${pkgs.lib.getExe' clang "clang++"}"
-                    export AR="${llvm}/bin/llvm-ar"
-                    export RANLIB="${llvm}/bin/llvm-ranlib"
-                    export CMAKE_C_COMPILER="$CC"
-                    export CMAKE_CXX_COMPILER="$CXX"
-                    export CMAKE_AR="$AR"
-                    export CMAKE_RANLIB="$RANLIB"
-                    export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
-                    export TMPDIR="''${TMPDIR:-/tmp}"
-                  ''
-                  + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-                    export LD="${pkgs.lib.getExe' lld "ld.lld"}"
-                    export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
-                    export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath bunDevPackages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                  '';
-
-                CMAKE_BUILD_TYPE = "Debug";
-                ENABLE_CCACHE = "1";
-              };
+          bun-dev = pkgs.mkBunDevShell { };
         }
       );
 
