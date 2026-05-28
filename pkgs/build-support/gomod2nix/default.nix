@@ -637,6 +637,8 @@ let
       passthru ? { },
       tags ? [ ],
       ldflags ? [ ],
+      ldflagsX ? { },
+      overwriteLdflagsX ? false,
       commit ?
         if src != null && src ? rev then
           src.rev
@@ -829,9 +831,43 @@ let
         "-X main.commit=${commit}"
       ];
 
+      # Symbol name (importpath.name) from a single `-X SYM=VAL` (or
+      # `-X=SYM=VAL`) ldflag entry; null for non-`-X` flags (-s, -w,
+      # -extldflags, …). Handles the one-`-X`-per-list-element convention
+      # nixpkgs uses; an exotic element packing multiple `-X` into one string
+      # only reports its first symbol (fail-open — the common case is covered).
+      ldflagXSymbol =
+        entry:
+        let
+          m = builtins.match "-X[ =]([^=]+)=.*" entry;
+        in
+        if m != null then elemAt m 0 else null;
+
+      claimedXSymbols = builtins.filter (s: s != null) (
+        map ldflagXSymbol (versionLdflags ++ ldflags)
+      );
+
+      ldflagsXCollisions = builtins.filter (k: builtins.elem k claimedXSymbols) (
+        builtins.attrNames ldflagsX
+      );
+
+      ldflagsXFlags =
+        if ldflagsXCollisions != [ ] && !overwriteLdflagsX then
+          throw ''
+            buildGoApplication: ldflagsX would overwrite -X symbol(s) already set
+            by the auto-injected version/commit ldflags or the `ldflags` list:
+
+              ${concatStringsSep ", " ldflagsXCollisions}
+
+            Pass `overwriteLdflagsX = true` to let ldflagsX win (its flags are
+            appended last, so Go's linker uses them), or drop the colliding key(s).
+          ''
+        else
+          mapAttrsToList (name: value: "-X ${name}=${value}") ldflagsX;
+
       # Only used by the final build. Passing these to mkGoCacheEnv would
       # invalidate the cache hash on every commit without changing contents.
-      effectiveLdflags = versionLdflags ++ ldflags;
+      effectiveLdflags = versionLdflags ++ ldflags ++ ldflagsXFlags;
 
     in
     stdenv.mkDerivation (
@@ -843,7 +879,11 @@ let
       // optionalAttrs (hasAttr "subPackages" modulesStruct) {
         subPackages = modulesStruct.subPackages;
       }
-      // (removeAttrs attrs [ "goFlakeInputs" ])
+      // (removeAttrs attrs [
+        "goFlakeInputs"
+        "ldflagsX"
+        "overwriteLdflagsX"
+      ])
       // optionalAttrs (!(attrs ? version) && versionFromEnv != null) {
         # Keep the derivation `version` attr in lockstep with the
         # `-X main.version` ldflag when version.env is the source. Placed

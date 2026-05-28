@@ -429,6 +429,50 @@ In development (*nix develop*), the binary is built without the ldflag
 injection, so *version* and *commit* will read *"dev"* and *"unknown"*
 respectively — which is the intended behaviour.
 
+## Structured -X ldflags (ldflagsX)
+
+For setting additional linker string symbols, *buildGoApplication* accepts an
+*ldflagsX* attribute: an attrset mapping a Go symbol path (*importpath.name*)
+to a value. Each entry renders to one *-X importpath.name=value* token, sparing
+callers the hand-written *-X* string in the *ldflags* list.
+
+```
+buildGoApplication {
+  ldflagsX = {
+    "main.buildDate" = "2026-05-28";
+    "main.channel"   = "stable";
+  };
+}
+# adds: -X main.buildDate=2026-05-28 -X main.channel=stable
+```
+
+The rendered flags are appended *after* the auto-injected version/commit flags
+and the raw *ldflags* list. Because the Go linker's *-X* is last-wins when a
+symbol is set twice, *ldflagsX* is authoritative on any overlap.
+
+To make that overlap explicit rather than silent, a key that collides with a
+*-X* symbol already set — by the auto-injected *main.version* / *main.commit*,
+or by a *-X* entry in the raw *ldflags* list — *throws at eval time*. Pass
+*overwriteLdflagsX = true* to allow the override:
+
+```
+# Override the auto-injected -X main.version. Without overwriteLdflagsX this
+# throws, because main.version is already set by the version/commit injection.
+buildGoApplication {
+  ldflagsX = { "main.version" = "9.9.9-rc1"; };
+  overwriteLdflagsX = true;
+}
+```
+
+Prefer the *version* attribute (or a *version.env*) over overriding
+*main.version* through *ldflagsX* — those keep the derivation *version* attr in
+lockstep with the embedded value. *ldflagsX* is for the symbols the version
+machinery does not already cover.
+
+Values with embedded spaces are not supported, the same as the raw *ldflags*
+list: both are space-joined into a single *-ldflags=* argument and re-split by
+the Go linker.
+
 # SEE ALSO
 
 *gomod2nix*(1), *nix-build*(1), *nix*(1)
