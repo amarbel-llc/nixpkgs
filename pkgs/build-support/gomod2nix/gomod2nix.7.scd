@@ -348,10 +348,38 @@ build:
 -X main.commit=<commit>
 ```
 
-*version* comes from the *version* attribute passed to *buildGoApplication*,
-or from *gomod2nix.toml* if *goPackagePath* is set there. *commit* comes from
-*src.rev* or *src.shortRev* if the source is a flake input; otherwise it is
-the string *"unknown"*.
+*version* is resolved in this order: the *version* attribute passed to
+*buildGoApplication* (an explicit value always wins); else a *version.env*
+in the build's module dir (see *version.env auto-read* below); else the
+module version from *gomod2nix.toml* if *goPackagePath* is set there; else
+the string *"dev"*. *commit* comes from *src.rev* or *src.shortRev* if the
+source is a flake input; otherwise it is the string *"unknown"*.
+
+## version.env auto-read
+
+When the build's module dir (*pwd*, which defaults to *src*) contains a
+*version.env* declaring a single <PACKAGE>\_VERSION line, *buildGoApplication*
+reads it at eval time and uses the value as the version source of truth for
+both the derivation *version* attribute and the *-X main.version* ldflag. This
+is the eng-versioning(7) convention — a repo gets version embedding for free
+just by having a *version.env*, with no per-repo readFile/match boilerplate in
+its flake.
+
+```
+export PURSE_FIRST_VERSION=0.2.3
+```
+
+The *export* keyword is optional. The value is captured as a single
+whitespace-delimited token, so a trailing comment or newline is ignored.
+Polyglot repos keep one *version.env* per package directory; because the file
+is read from *pwd* (the *go.mod* dir of the build), each module picks up its
+own package-local file.
+
+Note the limitation for the *mkGoPkgs* producer pattern: when *pwd* points at a
+filtered *go-pkgs-test* tree, that tree excludes *version.env* (it is not a Go
+or module file), so the auto-read finds nothing. Such producers either pass
+*version* explicitly or add *version.env* to *mkGoPkgs* *extras* so it survives
+into the filtered tree.
 
 ## Getting a real commit hash
 

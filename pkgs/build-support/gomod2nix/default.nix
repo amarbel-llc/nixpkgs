@@ -789,9 +789,36 @@ let
 
       pname = attrs.pname or baseNameOf defaultPackage;
 
+      # version.env auto-read (eng-versioning(7) § VERSION EMBEDDING,
+      # amarbel-llc/nixpkgs#31). When the build's module dir carries a
+      # `version.env` declaring `export <PACKAGE>_VERSION=<sem>`, read it
+      # at eval time and treat it as the version source of truth. This
+      # frees consumers from repeating the readFile/match boilerplate in
+      # their flake — having the file is sufficient. `export` is optional
+      # (the leading `.*` absorbs it); the value is captured as a single
+      # whitespace-delimited token. Polyglot repos keep one version.env
+      # per package dir, so reading at `effectivePwd` (the go.mod dir)
+      # picks up the package-local file. Returns null when the file is
+      # absent or carries no `*_VERSION=` line, so resolution falls
+      # through cleanly.
+      versionEnvPath = "${toString effectivePwd}/version.env";
+      versionFromEnv =
+        if pathExists versionEnvPath then
+          let
+            m = builtins.match ".*_VERSION=([^[:space:]]+).*" (readFile versionEnvPath);
+          in
+          if m != null then elemAt m 0 else null
+        else
+          null;
+
+      # Resolution order: an explicitly passed `version` wins (backward
+      # compatible — explicit beats implicit), then version.env, then the
+      # gomod2nix.toml module version, then "dev".
       effectiveVersion =
         if attrs ? version then
           attrs.version
+        else if versionFromEnv != null then
+          versionFromEnv
         else if defaultPackage != "" then
           stripVersion (modulesStruct.mod.${defaultPackage}).version
         else
@@ -817,6 +844,14 @@ let
         subPackages = modulesStruct.subPackages;
       }
       // (removeAttrs attrs [ "goFlakeInputs" ])
+      // optionalAttrs (!(attrs ? version) && versionFromEnv != null) {
+        # Keep the derivation `version` attr in lockstep with the
+        # `-X main.version` ldflag when version.env is the source. Placed
+        # after the attrs spread so it overrides the gomod2nix-derived
+        # default, but guarded on `!(attrs ? version)` so an explicit
+        # caller version still wins.
+        version = versionFromEnv;
+      }
       // {
         nativeBuildInputs = [
           go
