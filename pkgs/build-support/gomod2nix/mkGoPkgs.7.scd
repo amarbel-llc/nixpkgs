@@ -65,8 +65,10 @@ those ending in \_test.go; the module files (go.mod, go.sum,
 gomod2nix.toml) matched by basename anywhere in the tree (except
 under testdata), so go.work-based workspaces' child module files
 survive; the workspace files (go.work, go.work.sum) at the source
-root; and whatever paths *extras* additionally matches. Downstream
-prod consumers bridge against this output by default.
+root; any *version.env* files (matched by basename anywhere except
+under testdata — see *version.env* below); and whatever paths
+*extras* additionally matches. Downstream prod consumers bridge
+against this output by default.
 
 *go-pkgs-test* is the test superset. It contains everything in
 *go-pkgs*, plus test files (those ending in \_test.go), plus
@@ -119,6 +121,18 @@ The *modules* argument is a producer-discretion call:
   impossible
 
 Either form satisfies the protocol.
+
+## version.env
+
+*mkGoPkgs* keeps *version.env* files in both outputs (by basename,
+anywhere except under *testdata*). This dovetails with
+*buildGoApplication*'s version.env auto-read (gomod2nix(7) § VERSION
+AND COMMIT INJECTION): because the file survives into *go-pkgs* /
+*go-pkgs-test*, a self-consuming producer whose *pwd* points at the
+filtered tree gets version embedding for free — no *version*
+threading and no *extras* entry for the file. Polyglot repos keep one
+*version.env* per package dir; each is preserved at its original path,
+so a per-module *buildGoApplication* picks up the package-local file.
 
 # gomod.nix CONVENTION
 

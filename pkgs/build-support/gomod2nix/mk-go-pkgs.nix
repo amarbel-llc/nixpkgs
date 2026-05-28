@@ -172,10 +172,25 @@ let
           "go.work.sum"
         ];
 
+      # version.env carries the release version (eng-versioning(7),
+      # amarbel-llc/nixpkgs#31). Keeping it in the filtered tree lets
+      # buildGoApplication's version.env auto-read find the package-local
+      # file when a producer self-consumes its own go-pkgs / go-pkgs-test
+      # artifact (pwd = filtered tree) — so producers get version
+      # embedding for free without threading `version` through by hand.
+      # Matched by basename anywhere except under testdata/: polyglot
+      # repos keep one per package dir, and a testdata fixture's
+      # version.env must not be promoted (mirrors isModuleFile's #47
+      # exclusion).
+      isVersionEnvFile =
+        relPath:
+        baseNameOf relPath == "version.env" && !isTestdataFile relPath;
+
       prodPredicate =
         relPath:
         isProdGoFile relPath
         || isModuleFile relPath
+        || isVersionEnvFile relPath
         || isExtra relPath;
 
       testPredicate =

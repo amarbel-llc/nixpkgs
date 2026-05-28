@@ -43,6 +43,15 @@ let
     mkdir -p $out/internal/foo/testdata/fixturemod
     echo "module example.com/fixturemod" > $out/internal/foo/testdata/fixturemod/go.mod
 
+    # #31: version.env files. The producer's filtered tree must keep
+    # them so buildGoApplication's version.env auto-read finds the
+    # package-local file when a producer self-consumes go-pkgs(-test).
+    # Kept by basename anywhere EXCEPT under testdata/ — a testdata
+    # fixture's version.env must not be promoted into prod.
+    echo "export EXAMPLE_VERSION=1.2.3" > $out/version.env
+    echo "export DEWEY_VERSION=0.2.4" > $out/libs/dewey/version.env
+    echo "export FIXTURE_VERSION=9.9.9" > $out/internal/foo/testdata/version.env
+
     # #60: //go:embed prod assets — the asset under templates/ must be
     # kept in both outputs when the caller passes a matching `extras`
     # regex. Until go2nix can derive these from the AST, adopters
@@ -135,6 +144,14 @@ let
   prodHasTestdataGoMod =
     builtins.pathExists "${built.go-pkgs}/internal/foo/testdata/fixturemod/go.mod";
 
+  # version.env kept in both outputs by basename, dropped under testdata (#31).
+  prodHasRootVersionEnv = builtins.pathExists "${built.go-pkgs}/version.env";
+  prodHasSubVersionEnv = builtins.pathExists "${built.go-pkgs}/libs/dewey/version.env";
+  prodHasTestdataVersionEnv =
+    builtins.pathExists "${built.go-pkgs}/internal/foo/testdata/version.env";
+  testHasRootVersionEnv = builtins.pathExists "${built.go-pkgs-test}/version.env";
+  testHasSubVersionEnv = builtins.pathExists "${built.go-pkgs-test}/libs/dewey/version.env";
+
   testTopFiles = builtins.attrNames (builtins.readDir built.go-pkgs-test);
   testHasMainTest = builtins.pathExists "${built.go-pkgs-test}/cmd/example/main_test.go";
   testHasNestedTestdata = builtins.pathExists "${built.go-pkgs-test}/internal/foo/testdata/cases.json";
@@ -192,6 +209,15 @@ pkgs.runCommand "mk-go-pkgs-tests"
         (! prodHasTestdataGoMod))
       (assert' "prod: drops README.md (no extras)"
         (! (builtins.elem "README.md" prodTopFiles)))
+
+      # #31: version.env kept in both outputs (so a self-consuming
+      # producer's buildGoApplication auto-read finds the package-local
+      # file), but a testdata fixture's version.env must not reach prod.
+      (assert' "#31: prod keeps root version.env" prodHasRootVersionEnv)
+      (assert' "#31: prod keeps libs/dewey/version.env" prodHasSubVersionEnv)
+      (assert' "#31: prod drops testdata/version.env" (! prodHasTestdataVersionEnv))
+      (assert' "#31: test keeps root version.env" testHasRootVersionEnv)
+      (assert' "#31: test keeps libs/dewey/version.env" testHasSubVersionEnv)
 
       # go-pkgs-test is a superset.
       (assert' "test: keeps cmd/example/main_test.go" testHasMainTest)

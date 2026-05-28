@@ -375,11 +375,11 @@ Polyglot repos keep one *version.env* per package directory; because the file
 is read from *pwd* (the *go.mod* dir of the build), each module picks up its
 own package-local file.
 
-Note the limitation for the *mkGoPkgs* producer pattern: when *pwd* points at a
-filtered *go-pkgs-test* tree, that tree excludes *version.env* (it is not a Go
-or module file), so the auto-read finds nothing. Such producers either pass
-*version* explicitly or add *version.env* to *mkGoPkgs* *extras* so it survives
-into the filtered tree.
+This works with the *mkGoPkgs* producer pattern too: *mkGoPkgs* keeps
+*version.env* files in its *go-pkgs* / *go-pkgs-test* outputs (see
+mkGoPkgs(7) § version.env), so a self-consuming producer whose *pwd* points
+at the filtered tree still finds the package-local file — no *extras* entry
+or explicit *version* needed.
 
 ## Getting a real commit hash
 
