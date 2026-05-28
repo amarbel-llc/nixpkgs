@@ -1,6 +1,6 @@
 # vim: ft=just
 
-default: check-changed
+default: check-changed test-gomod2nix
 
 # Eval-check changed packages (fast — catches nix errors without building)
 check-changed:
@@ -122,6 +122,32 @@ build pkg:
 [group: 'test']
 nix-build-test path:
     NIXPKGS_ALLOW_UNFREE=1 nix-build --no-out-link "{{ path }}"
+
+# [test] Build every gomod2nix build-support eval-test fixture. These pin
+# buildGoApplication / mkGoEnv / mkGoPkgs behavior (version resolution,
+# pwd validation, the goFlakeInputs merge, the producer-side filter) that
+# check-changed's eval pass does not exercise. Wired into `default` so a
+# regression fails the merge hook instead of waiting for someone to run
+# the per-file recipe by hand.
+[group: 'test']
+test-gomod2nix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    failed=()
+    for f in pkgs/build-support/gomod2nix/*-test.nix; do
+        gum log --level info "building $f"
+        if NIXPKGS_ALLOW_UNFREE=1 nix-build --no-out-link "$f"; then
+            gum log --level info "$f ok"
+        else
+            gum log --level error "$f failed"
+            failed+=("$f")
+        fi
+    done
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        gum log --level error "failed eval-tests:" "${failed[@]}"
+        exit 1
+    fi
+    gum log --level info "all gomod2nix eval-tests passed"
 
 # [explore] Test the overlay-flake migration against amarbel-llc/maneater
 # Clones into .tmp/maneater (or reuses), bumps the nixpkgs input, runs
